@@ -1,19 +1,35 @@
 /**
  * Embedding Service
  * Generates vector embeddings using the Grok (xAI) Embeddings API.
+ * Includes caching layer for performance optimization.
  */
 const axios = require('axios');
 const llmConfig = require('../../config/llm');
+const cacheService = require('../../utils/cacheService');
 const { ExternalServiceError } = require('../../utils/errorHandler');
 
 /**
- * Generate an embedding vector for a single text string.
+ * Generate an embedding vector for a single text string (with caching).
  * @param {string} text - Input text to embed
+ * @param {boolean} skipCache - Skip cache lookup (default false)
  * @returns {Promise<number[]>} Embedding vector
  */
-async function generateEmbedding(text) {
+async function generateEmbedding(text, skipCache = false) {
+  // Check cache first
+  if (!skipCache) {
+    const cached = cacheService.getEmbedding(text);
+    if (cached) {
+      return cached;
+    }
+  }
+
   const embeddings = await generateEmbeddings([text]);
-  return embeddings[0];
+  const embedding = embeddings[0];
+
+  // Cache the result
+  cacheService.setEmbedding(text, embedding);
+
+  return embedding;
 }
 
 /**
@@ -82,25 +98,71 @@ async function generateEmbeddings(texts) {
 
 /**
  * Generate embeddings in batches to avoid payload limits.
+ * Uses caching to avoid re-generating embeddings for previously seen text.
  * @param {string[]} texts - All texts to embed
  * @param {number} batchSize - Texts per API call (default 20)
+ * @param {boolean} skipCache - Skip cache lookup (default false)
  * @returns {Promise<number[][]>}
  */
-async function generateEmbeddingsBatched(texts, batchSize = 20) {
-  const allEmbeddings = [];
+async function generateEmbeddingsBatched(texts, batchSize = 20, skipCache = false) {
+  if (!texts || texts.length === 0) {
+    return [];
+  }
 
-  for (let i = 0; i < texts.length; i += batchSize) {
-    const batch = texts.slice(i, i + batchSize);
+  // Check cache for existing embeddings
+  const results = new Array(texts.length);
+  let textsToGenerate = [];
+  let indicesToFill = [];
+
+  if (!skipCache) {
+    const { hits, misses } = cacheService.getEmbeddingsBatch(texts);
+    
+    // Fill in cached results
+    texts.forEach((text, idx) => {
+      if (hits.has(text)) {
+        results[idx] = hits.get(text);
+      } else {
+        textsToGenerate.push(text);
+        indicesToFill.push(idx);
+      }
+    });
+
+    if (textsToGenerate.length === 0) {
+      console.log(`[Embeddings] All ${texts.length} embeddings served from cache`);
+      return results;
+    }
+
+    console.log(`[Embeddings] Cache: ${hits.size} hits, ${misses.length} misses`);
+  } else {
+    textsToGenerate = texts;
+    indicesToFill = texts.map((_, i) => i);
+  }
+
+  // Generate embeddings for cache misses
+  const generatedEmbeddings = [];
+  for (let i = 0; i < textsToGenerate.length; i += batchSize) {
+    const batch = textsToGenerate.slice(i, i + batchSize);
     const embeddings = await generateEmbeddings(batch);
-    allEmbeddings.push(...embeddings);
+    generatedEmbeddings.push(...embeddings);
 
     // Small delay between batches to be polite to the API
-    if (i + batchSize < texts.length) {
+    if (i + batchSize < textsToGenerate.length) {
       await sleep(200);
     }
   }
 
-  return allEmbeddings;
+  // Fill in results and cache new embeddings
+  const toCache = new Map();
+  generatedEmbeddings.forEach((emb, i) => {
+    const originalIdx = indicesToFill[i];
+    results[originalIdx] = emb;
+    toCache.set(textsToGenerate[i], emb);
+  });
+
+  // Cache all new embeddings
+  cacheService.setEmbeddingsBatch(toCache);
+
+  return results;
 }
 
 function sleep(ms) {

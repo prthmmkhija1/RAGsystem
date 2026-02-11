@@ -19,7 +19,11 @@ const querySchema = Joi.object({
   topK: Joi.number().integer().min(1).max(20).default(5),
   documentId: Joi.string().uuid().optional(),
   includeMetadata: Joi.boolean().default(true),
-  temperature: Joi.number().min(0).max(1).optional()
+  temperature: Joi.number().min(0).max(1).optional(),
+  verify: Joi.boolean().default(false)
+    .description('Run answer verification against source chunks'),
+  rerank: Joi.boolean().default(false)
+    .description('Re-rank results using cross-encoder for better relevance')
 });
 
 // ---- /compare validation ----
@@ -33,7 +37,9 @@ const compareSchema = Joi.object({
     }),
   topic: Joi.string().trim().min(1).max(2000).required()
     .messages({ 'string.empty': 'Comparison topic is required' }),
-  topK: Joi.number().integer().min(1).max(20).default(5)
+  topK: Joi.number().integer().min(1).max(20).default(5),
+  structured: Joi.boolean().default(false)
+    .description('Return comparison as structured JSON with parsed sections')
 });
 
 // ---- /documents/:id param validation ----

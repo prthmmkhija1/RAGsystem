@@ -10,6 +10,7 @@ const compareRoutes = require('./src/routes/compare');
 // Middleware
 const { errorHandler } = require('./src/utils/errorHandler');
 const vectorStoreService = require('./src/vectorstore/vectorStoreService');
+const cacheService = require('./src/utils/cacheService');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -34,6 +35,7 @@ app.use('/api', compareRoutes);   // POST /api/compare
 app.get('/health', async (req, res) => {
   try {
     const stats = await vectorStoreService.getStats();
+    const cacheStats = cacheService.getStats();
     res.json({
       status: 'ok',
       service: 'RAG System with Grok + ChromaDB',
@@ -41,7 +43,8 @@ app.get('/health', async (req, res) => {
       vectorStore: {
         totalDocuments: stats.totalDocuments,
         totalChunks: stats.totalChunks
-      }
+      },
+      cache: cacheStats
     });
   } catch {
     res.json({

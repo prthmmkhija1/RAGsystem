@@ -10,13 +10,15 @@ const ragService = require('../services/rag/ragService');
  */
 async function queryDocuments(req, res, next) {
   try {
-    const { query, topK, documentId, includeMetadata, temperature } = req.body;
+    const { query, topK, documentId, includeMetadata, temperature, verify, rerank } = req.body;
 
     const result = await ragService.queryDocuments(query, {
       topK,
       documentId,
       includeMetadata,
-      temperature
+      temperature,
+      verify,
+      rerank
     });
 
     res.json({

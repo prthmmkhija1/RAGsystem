@@ -10,9 +10,9 @@ const ragService = require('../services/rag/ragService');
  */
 async function compareDocuments(req, res, next) {
   try {
-    const { documentIds, topic, topK } = req.body;
+    const { documentIds, topic, topK, structured } = req.body;
 
-    const result = await ragService.compareDocuments(documentIds, topic, { topK });
+    const result = await ragService.compareDocuments(documentIds, topic, { topK, structured });
 
     res.json({
       success: true,

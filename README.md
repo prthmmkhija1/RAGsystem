@@ -1,29 +1,281 @@
-# Production-Grade RAG System - Implementation Guide
+# 🚀 Production-Grade RAG System
 
-## Grok AI + ChromaDB
+> **Retrieval-Augmented Generation** system built with **Grok AI** and **ChromaDB** for grounding LLM responses in your private documents.
 
-## 🎯 Project Overview
+[![Node.js](https://img.shields.io/badge/Node.js-18+-green.svg)](https://nodejs.org/)
+[![Express](https://img.shields.io/badge/Express-4.x-blue.svg)](https://expressjs.com/)
+[![ChromaDB](https://img.shields.io/badge/ChromaDB-Vector%20Store-orange.svg)](https://www.trychroma.com/)
+[![Grok AI](https://img.shields.io/badge/Grok-xAI-purple.svg)](https://x.ai/)
 
-This is a **Retrieval-Augmented Generation (RAG)** system built with **Grok AI** and **ChromaDB** to solve the LLM hallucination problem by grounding AI responses in your private documents. Instead of letting the AI "guess," the system retrieves relevant information from your documents and instructs the AI to answer using **only** that information.
+---
 
-### The Problem
+## 📋 Table of Contents
 
-Standard LLMs (like ChatGPT) might not know about your private company data, or they might hallucinate when asked about specific obscure topics.
+- [Overview](#-overview)
+- [System Architecture](#-system-architecture)
+- [Features](#-features)
+- [Project Structure](#-project-structure)
+- [Installation](#-installation)
+- [Configuration](#-configuration)
+- [API Reference](#-api-reference)
+- [Hallucination Reduction Strategy](#-hallucination-reduction-strategy)
+- [Retrieval Design Choices](#-retrieval-design-choices)
+- [Caching Strategy](#-caching-strategy)
+- [Testing](#-testing)
+- [Troubleshooting](#-troubleshooting)
 
-### The Solution
+---
 
-Your RAG system:
+## 🎯 Overview
 
-1. Looks up relevant information from your documents
-2. Feeds that info to the AI
-3. Says: "Answer the user's question using **only** this information"
+This RAG system solves the **LLM hallucination problem** by grounding AI responses in your private documents. Instead of letting the AI "guess," the system:
+
+1. **Retrieves** relevant information from your documents
+2. **Augments** the prompt with that context
+3. **Generates** an answer using only the provided information
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         RAG SYSTEM OVERVIEW                              │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│   📄 Documents ──► 🔪 Chunking ──► 🧮 Embeddings ──► 📦 Vector Store    │
+│                                                                          │
+│   ❓ Query ──► 🧮 Embed ──► 🔍 Search ──► 📝 Context ──► 🤖 LLM ──► ✅   │
+│                                                                          │
+└─────────────────────────────────────────────────────────────────────────┘
+```
 
 ### Technology Stack
 
-- **LLM & Embeddings:** Grok AI (xAI's Grok API)
-- **Vector Database:** ChromaDB
-- **Backend:** Node.js + Express
-- **Document Processing:** PDF, DOCX, TXT, Markdown support
+| Component            | Technology                 | Purpose                      |
+| -------------------- | -------------------------- | ---------------------------- |
+| **Runtime**          | Node.js 18+                | Server runtime               |
+| **Framework**        | Express.js                 | REST API                     |
+| **LLM & Embeddings** | Grok AI (xAI)              | Text generation & embeddings |
+| **Vector Database**  | ChromaDB                   | Similarity search            |
+| **Document Parsing** | pdf-parse, mammoth, marked | PDF, DOCX, MD support        |
+| **Validation**       | Joi                        | Request validation           |
+| **Re-ranking**       | Transformers.js            | Cross-encoder re-ranking     |
+
+---
+
+## 🏗️ System Architecture
+
+### High-Level Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              CLIENT LAYER                                    │
+│                         (REST API Consumers)                                 │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              API GATEWAY                                     │
+│  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐    ┌─────────────┐  │
+│  │   /upload   │    │   /query    │    │  /compare   │    │  /documents │  │
+│  │   (POST)    │    │   (POST)    │    │   (POST)    │    │ (GET/DELETE)│  │
+│  └─────────────┘    └─────────────┘    └─────────────┘    └─────────────┘  │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           CONTROLLER LAYER                                   │
+│  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐          │
+│  │documentController│  │ queryController  │  │compareController │          │
+│  └──────────────────┘  └──────────────────┘  └──────────────────┘          │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           SERVICE LAYER                                      │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │                         RAG Service                                  │   │
+│  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌────────────┐ │   │
+│  │  │  Document   │  │  Embedding  │  │   Rerank    │  │    LLM     │ │   │
+│  │  │   Parser    │  │   Service   │  │   Service   │  │  Service   │ │   │
+│  │  └─────────────┘  └─────────────┘  └─────────────┘  └────────────┘ │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    │
+                    ┌───────────────┼───────────────┐
+                    ▼               ▼               ▼
+┌──────────────────────┐ ┌──────────────────┐ ┌──────────────────────┐
+│    Vector Store      │ │    Grok API      │ │    Cache Layer       │
+│    (ChromaDB)        │ │    (xAI)         │ │   (node-cache)       │
+└──────────────────────┘ └──────────────────┘ └──────────────────────┘
+```
+
+### Document Ingestion Pipeline
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                       DOCUMENT INGESTION FLOW                                │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+   ┌──────────┐      ┌──────────┐      ┌──────────┐      ┌──────────┐
+   │  Upload  │      │  Parse   │      │  Chunk   │      │  Embed   │
+   │   File   │ ───► │ Document │ ───► │   Text   │ ───► │  Chunks  │
+   │          │      │          │      │          │      │          │
+   └──────────┘      └──────────┘      └──────────┘      └──────────┘
+        │                 │                 │                 │
+        │                 │                 │                 │
+        ▼                 ▼                 ▼                 ▼
+   ┌──────────┐      ┌──────────┐      ┌──────────┐      ┌──────────┐
+   │ Validate │      │ Extract  │      │ Sentence │      │ Batched  │
+   │ Format   │      │ Raw Text │      │ Boundary │      │   API    │
+   │ (PDF,    │      │ (UTF-8)  │      │ Aware    │      │  Calls   │
+   │ DOCX,TXT)│      │          │      │ Overlap  │      │ (Cached) │
+   └──────────┘      └──────────┘      └──────────┘      └──────────┘
+                                                              │
+                                                              ▼
+                                                         ┌──────────┐
+                                                         │  Store   │
+                                                         │  Vectors │
+                                                         │ ChromaDB │
+                                                         └──────────┘
+
+   Supported Formats: PDF │ DOCX │ TXT │ Markdown
+   Chunk Size: 1000 words (configurable)
+   Overlap: 50 words (configurable)
+```
+
+### Query Pipeline
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                          QUERY PROCESSING FLOW                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+                              ┌─────────────┐
+                              │    User     │
+                              │   Query     │
+                              └──────┬──────┘
+                                     │
+                    ┌────────────────┼────────────────┐
+                    ▼                                 ▼
+             ┌─────────────┐                  ┌─────────────┐
+             │ Check Query │                  │   Embed     │
+             │   Cache     │                  │   Query     │
+             └──────┬──────┘                  └──────┬──────┘
+                    │                                │
+              (HIT) │ (MISS)                        │
+                    │    └──────────────────────────┤
+                    │                               ▼
+                    │                        ┌─────────────┐
+                    │                        │   Vector    │
+                    │                        │   Search    │
+                    │                        │  (Top-K×3)  │
+                    │                        └──────┬──────┘
+                    │                               │
+                    │                               ▼
+                    │                        ┌─────────────┐
+                    │                        │  Re-Rank    │
+                    │                        │(Cross-Enc.) │
+                    │                        │  → Top-K    │
+                    │                        └──────┬──────┘
+                    │                               │
+                    │                               ▼
+                    │                        ┌─────────────┐
+                    │                        │   Build     │
+                    │                        │  Context    │
+                    │                        │   Block     │
+                    │                        └──────┬──────┘
+                    │                               │
+                    │                               ▼
+                    │                        ┌─────────────┐
+                    │                        │    LLM      │
+                    │                        │  Generate   │
+                    │                        │   Answer    │
+                    │                        └──────┬──────┘
+                    │                               │
+                    │                               ▼
+                    │                        ┌─────────────┐
+                    │                        │   Parse     │
+                    │                        │ Confidence  │
+                    │                        └──────┬──────┘
+                    │                               │
+                    │     ┌─────────────────────────┤
+                    │     │ (if verify=true)        │
+                    │     ▼                         │
+                    │  ┌─────────────┐              │
+                    │  │   Verify    │              │
+                    │  │   Answer    │              │
+                    │  └──────┬──────┘              │
+                    │         │                     │
+                    │         └──────────┬──────────┘
+                    │                    │
+                    ▼                    ▼
+               ┌─────────────────────────────┐
+               │      Cache & Return         │
+               │         Response            │
+               └─────────────────────────────┘
+```
+
+### Comparison Pipeline
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                       DOCUMENT COMPARISON FLOW                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+  ┌──────────┐    ┌──────────┐                     ┌──────────┐    ┌──────────┐
+  │Document 1│    │Document 2│                     │   Doc 1  │    │   Doc 2  │
+  │    ID    │    │    ID    │                     │  Chunks  │    │  Chunks  │
+  └────┬─────┘    └────┬─────┘                     └────┬─────┘    └────┬─────┘
+       │               │                                │               │
+       └───────┬───────┘                                └───────┬───────┘
+               │                                                │
+               ▼                                                ▼
+        ┌─────────────┐                                  ┌─────────────┐
+        │   Embed     │                                  │   Merge &   │
+        │   Topic     │                                  │   Format    │
+        └──────┬──────┘                                  │   Context   │
+               │                                         └──────┬──────┘
+               ▼                                                │
+        ┌─────────────┐                                         ▼
+        │  Parallel   │                                  ┌─────────────┐
+        │   Search    │ ─────────────────────────────►   │    LLM      │
+        │ Both Docs   │                                  │  Compare    │
+        └─────────────┘                                  └──────┬──────┘
+                                                                │
+                                         ┌──────────────────────┴───────┐
+                                         │                              │
+                                  (structured=false)            (structured=true)
+                                         │                              │
+                                         ▼                              ▼
+                                  ┌─────────────┐               ┌─────────────┐
+                                  │ Markdown    │               │   JSON      │
+                                  │ Response    │               │ Structured  │
+                                  └─────────────┘               └─────────────┘
+```
+
+---
+
+## ✨ Features
+
+### Core Features (Required)
+
+| Feature                 | Status | Description                                                         |
+| ----------------------- | ------ | ------------------------------------------------------------------- |
+| Document Upload         | ✅     | PDF, DOCX, TXT, Markdown support                                    |
+| Intelligent Chunking    | ✅     | Configurable size (1000 words) + overlap (50 words), sentence-aware |
+| Embeddings              | ✅     | Grok API compatible (OpenAI/HuggingFace compatible)                 |
+| Vector Storage          | ✅     | ChromaDB with cosine similarity                                     |
+| Query Endpoint          | ✅     | Top-K retrieval + LLM answer + citations                            |
+| Compare Endpoint        | ✅     | Two-document comparison with structured differences                 |
+| Hallucination Reduction | ✅     | 3-layer strategy (see below)                                        |
+
+### Advanced Features
+
+| Feature                  | Status | Description                              |
+| ------------------------ | ------ | ---------------------------------------- |
+| Confidence Scoring       | ✅     | 1-10 score with explanation per response |
+| Answer Verification      | ✅     | Second-pass claim verification           |
+| Cross-Encoder Re-ranking | ✅     | Improved relevance with MiniLM model     |
+| Caching Layer            | ✅     | Embeddings (24h) + queries (1h)          |
+| Structured Comparison    | ✅     | JSON output with parsed sections         |
 
 ---
 
@@ -32,748 +284,382 @@ Your RAG system:
 ```
 /ai-rag-system
 ├── server.js                          # Express server entry point
-├── package.json                       # Dependencies
-├── .env.example                       # Environment variables template
-├── .gitignore
-├── README.md                          # This file
+├── package.json                       # Dependencies & scripts
+├── .env                               # Environment variables
+├── .gitignore                         # Git ignore rules
+├── README.md                          # This documentation
+│
 └── /src
     ├── /config
-    │   ├── database.js               # ChromaDB configuration
-    │   └── llm.js                    # Grok API configuration
+    │   ├── database.js                # ChromaDB configuration
+    │   └── llm.js                     # Grok API configuration
+    │
     ├── /routes
-    │   ├── documents.js              # Document upload routes
-    │   ├── query.js                  # Query routes
-    │   └── compare.js                # Compare routes
+    │   ├── documents.js               # Document upload/list/delete routes
+    │   ├── query.js                   # Query route
+    │   └── compare.js                 # Compare route
+    │
     ├── /controllers
-    │   ├── documentController.js     # Document ingestion logic
-    │   ├── queryController.js        # Query handling logic
-    │   └── compareController.js      # Comparison logic
+    │   ├── documentController.js      # Document ingestion logic
+    │   ├── queryController.js         # Query handling logic
+    │   └── compareController.js       # Comparison logic
+    │
     ├── /services
     │   ├── /rag
-    │   │   └── ragService.js         # RAG orchestration
+    │   │   ├── ragService.js          # RAG orchestration (main pipeline)
+    │   │   └── rerankService.js       # Cross-encoder re-ranking
     │   ├── /embeddings
-    │   │   └── embeddingService.js   # Grok embedding generation
+    │   │   └── embeddingService.js    # Grok embedding generation
     │   └── /llm
-    │       └── llmService.js         # Grok LLM API calls
+    │       └── llmService.js          # Grok chat completions
+    │
     ├── /vectorstore
-    │   └── vectorStoreService.js     # ChromaDB operations
+    │   └── vectorStoreService.js      # ChromaDB operations
+    │
     └── /utils
-        ├── documentParser.js         # Parse PDF/DOCX/TXT/MD
-        ├── chunkingService.js        # Intelligent text chunking
-        ├── errorHandler.js           # Error handling
-        └── validators.js             # Input validation
-```
-
-    ├── errorHandler.js               # Error handling
-    └── validators.js                 # Input validation
-
-```
-
-        ├── errorHandler.js           # Error handling
-        └── validators.js             # Input validation
-
+        ├── documentParser.js          # PDF/DOCX/TXT/MD parsing
+        ├── chunkingService.js         # Intelligent text chunking
+        ├── cacheService.js            # In-memory caching layer
+        ├── errorHandler.js            # Error handling middleware
+        └── validators.js              # Joi validation schemas
 ```
 
 ---
 
-## 🚀 Implementation Roadmap
+## 🛠️ Installation
 
-### Phase 1: Setup & Dependencies
+### Prerequisites
 
-#### 1.1 Install Core Dependencies
+- **Node.js** 18+
+- **Python** 3.8+ (for ChromaDB)
+- **Grok API Key** (from [x.ai](https://x.ai/api))
+
+### Step 1: Clone & Install Dependencies
 
 ```bash
-npm install express cors dotenv multer pdf-parse mammoth marked chromadb axios uuid joi
+git clone <repository-url>
+cd ai-rag-system
+npm install
 ```
 
-**Dependencies breakdown:**
-
-- `express` - Web server framework
-- `cors` - Enable CORS
-- `dotenv` - Environment variables
-- `multer` - File upload handling
-- `pdf-parse` - PDF parsing
-- `mammoth` - DOCX parsing
-- `marked` - Markdown parsing
-- `chromadb` - ChromaDB vector database client
-- `axios` - HTTP requests for Grok API
-- `uuid` - Generate unique IDs
-- `joi` - Input validation
-
-#### 1.2 Install Development Dependencies
+### Step 2: Install & Start ChromaDB
 
 ```bash
-npm install --save-dev nodemon
-```
-
-#### 1.3 Setup ChromaDB Server
-
-**Install ChromaDB:**
-
-```bash
+# Install ChromaDB
 pip install chromadb
-```
 
-**Run ChromaDB server:**
-
-```bash
+# Start ChromaDB server (terminal 1)
 chroma run --host localhost --port 8000
 ```
 
-#### 1.4 Configure Environment Variables
-
-Copy `.env.example` to `.env` and fill in your Grok API key:
+### Step 3: Configure Environment
 
 ```bash
+cp .env.example .env
+```
+
+Edit `.env` with your settings:
+
+```env
+# Grok API
 GROK_API_KEY=your_grok_api_key_here
 GROK_API_URL=https://api.x.ai/v1
-GROK_MODEL=grok-beta
+GROK_MODEL=grok-3-mini-fast
+GROK_EMBEDDING_MODEL=grok-embedding-public
+
+# ChromaDB
 CHROMA_HOST=http://localhost:8000
+CHROMA_COLLECTION=rag_documents
+
+# Server
 PORT=3000
+
+# Chunking
 CHUNK_SIZE=1000
 CHUNK_OVERLAP=50
+
+# LLM Settings
+MAX_TOKENS=1024
+TEMPERATURE=0.1
+
+# Cache TTL (seconds)
+EMBEDDING_CACHE_TTL=86400
+QUERY_CACHE_TTL=3600
+```
+
+### Step 4: Start the Server
+
+```bash
+# Development (with hot reload)
+npm run dev
+
+# Production
+npm start
 ```
 
 ---
 
-## 📦 Module 1: Document Ingestion Engine
+## ⚙️ Configuration
 
-### Goal
+### Chunking Configuration
 
-Build an API route that accepts file uploads (PDF, DOCX, TXT, Markdown) and processes them for storage.
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                          CHUNKING STRATEGY                                   │
+└─────────────────────────────────────────────────────────────────────────────┘
 
-### Implementation Steps
+   Document Text
+   ┌─────────────────────────────────────────────────────────────────────────┐
+   │ Sentence 1. Sentence 2. Sentence 3. Sentence 4. Sentence 5. Sentence 6.│
+   │ Sentence 7. Sentence 8. Sentence 9. Sentence 10. Sentence 11. ...      │
+   └─────────────────────────────────────────────────────────────────────────┘
+                                     │
+                                     ▼
+   ┌────────────────────────────┐    Overlap    ┌────────────────────────────┐
+   │        CHUNK 1             │◄─────────────►│        CHUNK 2             │
+   │ Sentence 1-6               │    50 words   │ Sentence 5-10              │
+   │ (~1000 words)              │               │ (~1000 words)              │
+   └────────────────────────────┘               └────────────────────────────┘
 
-#### Step 1.1: Document Parser Service (`src/utils/documentParser.js`)
+   Key Features:
+   ├── Sentence boundary awareness (never splits mid-sentence)
+   ├── Configurable chunk size (CHUNK_SIZE env var)
+   ├── Configurable overlap (CHUNK_OVERLAP env var)
+   └── Force-splits very long sentences when needed
+```
 
-**Purpose:** Extract raw text from different file formats.
+| Parameter       | Default | Description                      |
+| --------------- | ------- | -------------------------------- |
+| `CHUNK_SIZE`    | 1000    | Maximum words per chunk          |
+| `CHUNK_OVERLAP` | 50      | Overlapping words between chunks |
 
-**Key Functions:**
+### LLM Configuration
 
-- `parseDocument(file)` - Main entry point, detects file type and delegates
-- `parsePDF(buffer)` - Uses `pdf-parse` to extract text from PDFs
-- `parseDOCX(buffer)` - Uses `mammoth` to extract text from Word docs
-- `parseTXT(buffer)` - Simple UTF-8 text extraction
-- `parseMarkdown(buffer)` - Parse markdown files (optionally convert to plain text)
+| Parameter              | Default               | Description                                        |
+| ---------------------- | --------------------- | -------------------------------------------------- |
+| `TEMPERATURE`          | 0.1                   | Lower = more deterministic (reduces hallucination) |
+| `MAX_TOKENS`           | 1024                  | Maximum response length                            |
+| `GROK_MODEL`           | grok-3-mini-fast      | LLM model for generation                           |
+| `GROK_EMBEDDING_MODEL` | grok-embedding-public | Model for embeddings                               |
 
-**Implementation Tips:**
+---
 
-```javascript
-const pdfParse = require("pdf-parse");
-const mammoth = require("mammoth");
+## 📚 API Reference
 
-async function parsePDF(buffer) {
-  const data = await pdfParse(buffer);
-  return data.text;
-}
+### Base URL
 
-async function parseDOCX(buffer) {
-  const result = await mammoth.extractRawText({ buffer });
-  return result.value;
-}
+```
+http://localhost:3000/api
+```
 
-// Error handling: Wrap in try-catch, return meaningful errors
+### Endpoints Overview
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                            API ENDPOINTS                                     │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  POST   /api/upload        Upload and ingest a document                     │
+│  POST   /api/query         Query documents with natural language            │
+│  POST   /api/compare       Compare two documents on a topic                 │
+│  GET    /api/documents     List all ingested documents                      │
+│  DELETE /api/documents/:id Delete a document                                │
+│  GET    /api/stats         Get vector store statistics                      │
+│  GET    /health            Health check with cache stats                    │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-#### Step 1.2: Chunking Service (`src/utils/chunkingService.js`)
+### POST /api/upload
 
-**Purpose:** Split long documents into smaller, overlapping chunks.
+Upload and ingest a document into the vector store.
 
-**Why Chunking?**
+**Request:**
 
-- You cannot feed a 100-page PDF to an LLM all at once (token limits)
-- Smaller chunks = more precise retrieval
-- Overlap ensures context isn't lost at boundaries
-
-**Configuration (from requirements):**
-
-- **Chunk Size:** 1000 words (configurable via `CHUNK_SIZE` in `.env`)
-- **Overlap:** 50 words (configurable via `CHUNK_OVERLAP` in `.env`)
-
-**Key Function:**
-
-- `chunkText(text, chunkSize, overlap)` - Returns array of text chunks
-
-**Implementation Strategy:**
-
-```javascript
-function chunkText(text, chunkSize = 1000, overlap = 50) {
-  const words = text.split(/\s+/);
-  const chunks = [];
-
-  for (let i = 0; i < words.length; i += chunkSize - overlap) {
-    const chunk = words.slice(i, i + chunkSize).join(" ");
-    chunks.push({
-      text: chunk,
-      startIndex: i,
-      endIndex: Math.min(i + chunkSize, words.length),
-    });
-  }
-
-  return chunks;
-}
-```
-
-**Advanced Chunking (Optional):**
-
-- Respect paragraph boundaries
-- Don't split sentences mid-way
-- Use sliding window with sentence detection
-
----
-
-#### Step 1.3: Embedding Service (`src/services/embeddings/embeddingService.js`)
-
-**Purpose:** Convert text chunks into numerical vectors (embeddings) using Grok AI.
-
-**Key Function:**
-
-- `generateEmbedding(text)` - Returns vector array using Grok's embedding model
-
-**Grok API Implementation:**
-
-```javascript
-const axios = require("axios");
-const config = require("../../config/llm");
-
-async function generateEmbedding(text) {
-  try {
-    const response = await axios.post(
-      `${config.grok.apiUrl}/embeddings`,
-      {
-        model: config.grok.embeddingModel,
-        input: text,
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${config.grok.apiKey}`,
-          "Content-Type": "application/json",
-        },
-      },
-    );
-    return response.data.data[0].embedding;
-  } catch (error) {
-    throw new Error(`Grok embedding failed: ${error.message}`);
-  }
-}
-
-module.exports = { generateEmbedding };
-```
-
-**Batch Processing (Important):**
-
-- Process multiple chunks together when possible
-- Add retry logic with exponential backoff
-- Cache embeddings to avoid redundant API calls
-
----
-
-#### Step 1.4: Vector Store Service (`src/vectorstore/vectorStoreService.js`)
-
-**Purpose:** Store and retrieve vector embeddings from ChromaDB.
-
-**Key Functions:**
-
-- `initialize()` - Setup database connection/collection
-- `storeChunks(documentId, chunks, embeddings, metadata)` - Save vectors
-- `searchSimilar(queryVector, topK)` - Find most similar chunks
-- `deleteDocument(documentId)` - Remove document vectors
-
-**ChromaDB Example:**
-
-```javascript
-const { ChromaClient } = require("chromadb");
-
-class VectorStoreService {
-  constructor() {
-    this.client = new ChromaClient({
-      path: process.env.CHROMA_HOST || "http://localhost:8000",
-    });
-    this.collection = null;
-  }
-
-  async initialize() {
-    this.collection = await this.client.getOrCreateCollection({
-      name: "documents",
-      metadata: { "hnsw:space": "cosine" },
-    });
-  }
-
-  async storeChunks(documentId, chunks, embeddings, metadata) {
-    const ids = chunks.map((_, i) => `${documentId}_chunk_${i}`);
-    await this.collection.add({
-      ids,
-      embeddings,
-      documents: chunks,
-      metadatas: chunks.map((_, i) => ({
-        documentId,
-        chunkIndex: i,
-        ...metadata,
-      })),
-    });
-  }
-
-  async searchSimilar(queryVector, topK = 5) {
-    const results = await this.collection.query({
-      queryEmbeddings: [queryVector],
-      nResults: topK,
-    });
-    return results;
-  }
-
-  async deleteDocument(documentId) {
-    // Implementation to delete all chunks for a document
-    // Query by metadata filter and delete
-  }
-}
-
-module.exports = new VectorStoreService();
-```
-
----
-
-#### Step 1.5: Document Controller (`src/controllers/documentController.js`)
-
-**Purpose:** Orchestrate the entire ingestion pipeline.
-
-**Upload Flow:**
-
-1. Receive file upload (via `multer`)
-2. Parse document → extract text
-3. Chunk text into smaller pieces
-4. Generate embeddings for each chunk
-5. Store chunks + embeddings + metadata in vector database
-6. Return success response with document ID
-
-**Key Function:**
-
-```javascript
-const { v4: uuidv4 } = require("uuid");
-const documentParser = require("../utils/documentParser");
-const chunkingService = require("../utils/chunkingService");
-const embeddingService = require("../services/embeddings/embeddingService");
-const vectorStoreService = require("../vectorstore/vectorStoreService");
-
-async function uploadDocument(req, res) {
-  try {
-    // 1. Get uploaded file
-    const file = req.file;
-
-    if (!file) {
-      return res.status(400).json({ error: "No file uploaded" });
-    }
-
-    // 2. Parse document
-    const text = await documentParser.parseDocument(file);
-
-    // 3. Chunk text
-    const chunkSize = parseInt(process.env.CHUNK_SIZE) || 1000;
-    const chunkOverlap = parseInt(process.env.CHUNK_OVERLAP) || 50;
-    const chunks = chunkingService.chunkText(text, chunkSize, chunkOverlap);
-
-    // 4. Generate embeddings (batch process)
-    const embeddings = await Promise.all(
-      chunks.map((chunk) => embeddingService.generateEmbedding(chunk.text)),
-    );
-
-    // 5. Store in ChromaDB
-    const documentId = uuidv4();
-    await vectorStoreService.storeChunks(
-      documentId,
-      chunks.map((c) => c.text),
-      embeddings,
-      { filename: file.originalname, uploadDate: new Date() },
-    );
-
-    // 6. Return response
-    res.json({
-      success: true,
-      documentId,
-      filename: file.originalname,
-      chunksCount: chunks.length,
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-}
-```
-
----
-
-#### Step 1.6: Document Routes (`src/routes/documents.js`)
-
-**Endpoint:** `POST /upload`
-
-**Setup:**
-
-```javascript
-const express = require("express");
-const multer = require("multer");
-const documentController = require("../controllers/documentController");
-
-const router = express.Router();
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB limit
-});
-
-router.post(
-  "/upload",
-  upload.single("file"),
-  documentController.uploadDocument,
-);
-
-module.exports = router;
-```
-
----
-
-## 🔍 Module 2: Retrieval API (Query Endpoint)
-
-### Goal
-
-Build a `POST /query` endpoint that:
-
-1. Takes user's question
-2. Retrieves top-K most relevant chunks
-3. Sends question + chunks to LLM
-4. Returns answer with citations
-
-### Implementation Steps
-
-#### Step 2.1: Query Controller (`src/controllers/queryController.js`)
-
-**Query Flow:**
-
-1. Receive user question
-2. Generate embedding for the question using Grok
-3. Search ChromaDB for top-K similar chunks (e.g., K=3 or K=5)
-4. Build prompt with retrieved chunks
-5. Send to Grok LLM with strict instructions (hallucination reduction)
-6. Parse response and extract citations
-7. Return structured response
-
-**Key Implementation:**
-
-```javascript
-const embeddingService = require('../services/embeddings/embeddingService');
-const vectorStoreService = require('../vectorstore/vectorStoreService');
-const llmService = require('../services/llm/llmService');
-const { validateQuery } = require('../utils/validators');
-
-async function handleQuery(req, res) {
-  try {
-    // Validate input
-    const { error, value } = validateQuery(req.body);
-    if (error) {
-      return res.status(400).json({ error: error.details[0].message });
-    }
-
-    const { question, topK = 5 } = value;
-
-    // 1. Generate query embedding
-    const queryVector = await embeddingService.generateEmbedding(question);
-
-    // 2. Retrieve top-K similar chunks from ChromaDB
-    const results = await vectorStoreService.searchSimilar(queryVector, topK);
-
-    // 3. Extract chunks and metadata
-    const context = results.documents[0];
-    const metadata = results.metadatas[0];
-
-    // 4. Build prompt with strict instructions
-    const prompt = buildRAGPrompt(question, context, metadata);
-
-    // 5. Get LLM response
-    const answer = await llmService.generateAnswer(prompt);
-
-    // 6. Return response with citations
-    res.json({
-    // 4. Build prompt with strict instructions
-    const answer = await llmService.generateAnswer(question, context, metadata);
-
-    // 5. Return response with citations
-    res.json({
-      question,
-      answer: answer.text,
-      citations: metadata.map((m) => ({
-        documentId: m.documentId,
-        filename: m.filename,
-        chunkIndex: m.chunkIndex,
-      })),
-      retrievedChunks: context.length,
-    });
-  } catch (error) {
-    console.error('Query error:', error);
-    res.status(500).json({ error: error.message });
-  }
-}
-
-module.exports = { handleQuery };
-```
-
----
-
-#### Step 2.2: LLM Service (`src/services/llm/llmService.js`)
-
-**Purpose:** Interface with Grok API for answer generation.
-
-**Hallucination Reduction Strategy:**
-Use a **strict system prompt** that enforces context-only answering:
-
-```javascript
-const axios = require("axios");
-const config = require("../../config/llm");
-
-function buildRAGPrompt(question, contextChunks, metadata) {
-  const context = contextChunks
-    .map((chunk, i) => `[Document ${i + 1}: ${metadata[i].filename}]\n${chunk}`)
-    .join("\n\n---\n\n");
-
-  return {
-    systemPrompt: `You are a helpful assistant that answers questions based ONLY on the provided context. 
-
-CRITICAL RULES:
-1. If the answer is not in the context, respond: "I don't have enough information to answer this question."
-2. Never make up information or use external knowledge.
-3. Always cite which document your answer came from.
-4. Be concise and direct.`,
-
-    userPrompt: `Context:\n${context}\n\nQuestion: ${question}\n\nAnswer:`,
-  };
-}
-
-async function generateAnswer(question, contextChunks, metadata) {
-  try {
-    const prompt = buildRAGPrompt(question, contextChunks, metadata);
-
-    const response = await axios.post(
-      `${config.grok.apiUrl}/chat/completions`,
-      {
-        model: config.grok.model,
-        messages: [
-          { role: "system", content: prompt.systemPrompt },
-          { role: "user", content: prompt.userPrompt },
-        ],
-        temperature: 0.1, // Low temperature = less creative, more factual
-        max_tokens: 500,
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${config.grok.apiKey}`,
-          "Content-Type": "application/json",
-        },
-      },
-    );
-
-    return {
-      text: response.data.choices[0].message.content,
-      usage: response.data.usage,
-    };
-  } catch (error) {
-    throw new Error(`Grok API error: ${error.message}`);
-  }
-}
-
-module.exports = { generateAnswer };
-```
-
-````
-
----
-
-### API Endpoints
-
-**Query Endpoint:** `POST /query`
-
-**Request Body:**
-
-```json
-{
-  "question": "What are the key features of our product?",
-  "topK": 5
-}
-````
-
-**Response:**
-
-```json
-{
-  "question": "What are the key features of our product?",
-  "answer": "Based on the product documentation, the key features include...",
-  "citations": [
-    {
-      "documentId": "uuid-123",
-      "filename": "product_spec.pdf",
-      "chunkIndex": 3
-    }
-  ],
-  "retrievedChunks": 5
-}
-```
-
----
-
-## 🔄 Module 3: Comparison API
-
-### Goal
-
-Build a `POST /compare` endpoint that compares two specific documents on a given topic.
-
-### Implementation Steps
-
-#### Step 3.1: Comparison Controller (`src/controllers/compareController.js`)
-
-**Comparison Flow:**
-
-1. Receive topic + two document IDs
-2. Retrieve all chunks from both documents
-3. Filter chunks relevant to the topic (semantic search within each document)
-4. Send both documents' relevant sections to Grok LLM
-5. Ask LLM to compare and contrast
-6. Return structured comparison (JSON or table format)
-
-**Key Implementation:**
-
-```javascript
-const embeddingService = require("../services/embeddings/embeddingService");
-const vectorStoreService = require("../vectorstore/vectorStoreService");
-const llmService = require("../services/llm/llmService");
-const { validateComparison } = require("../utils/validators");
-
-async function compareDocuments(req, res) {
-  try {
-    // Validate input
-    const { error, value } = validateComparison(req.body);
-    if (error) {
-      return res.status(400).json({ error: error.details[0].message });
-    }
-
-    const { topic, documentId1, documentId2 } = value;
-
-    // 1. Generate topic embedding
-    const topicVector = await embeddingService.generateEmbedding(topic);
-
-    // 2. Retrieve relevant chunks from both documents
-    const doc1Chunks = await vectorStoreService.searchByDocument(
-      documentId1,
-      topicVector,
-      5,
-    );
-    const doc2Chunks = await vectorStoreService.searchByDocument(
-      documentId2,
-      topicVector,
-      5,
-    );
-
-    // 3. Get LLM comparison
-    const comparison = await llmService.generateComparison(
-      topic,
-      doc1Chunks,
-      doc2Chunks,
-    );
-
-    // 4. Return structured response
-    res.json({
-      topic,
-      document1: {
-        id: documentId1,
-        filename: doc1Chunks.metadatas[0][0].filename,
-      },
-      document2: {
-        id: documentId2,
-        filename: doc2Chunks.metadata[0].filename,
-      },
-      comparison: comparison.structured,
-      differences: comparison.differences,
-      similarities: comparison.similarities,
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-}
-```
-
----
-
-#### Step 3.2: Comparison Prompt Engineering
-
-**Strategy:** Ask the LLM to return structured JSON comparing the documents.
-
-```javascript
-function buildComparisonPrompt(topic, doc1Chunks, doc2Chunks) {
-  const doc1Context = doc1Chunks.documents.join("\n\n");
-  const doc2Context = doc2Chunks.documents.join("\n\n");
-
-  return {
-    systemPrompt: `You are a document comparison expert. Compare two documents on a specific topic and return a structured JSON response.
-
-Response format:
-{
-  "summary": "Brief comparison summary",
-  "differences": [
-    {"aspect": "...", "document1": "...", "document2": "..."}
-  ],
-  "similarities": ["..."],
-  "conclusion": "..."
-}`,
-
-    userPrompt: `Topic: ${topic}
-
-Document 1:
-${doc1Context}
-
-Document 2:
-${doc2Context}
-
-Compare these documents on the topic "${topic}" and return a structured comparison.`,
-  };
-}
-```
-
----
-
-#### Step 3.3: Comparison Routes (`src/routes/compare.js`)
-
-**Endpoint:** `POST /compare`
-
-**Request Body:**
-
-```json
-{
-  "topic": "pricing structure",
-  "documentId1": "uuid-123",
-  "documentId2": "uuid-456"
-}
+```bash
+curl -X POST http://localhost:3000/api/upload \
+  -F "document=@./my-document.pdf" \
+  -F "chunkSize=1000" \
+  -F "chunkOverlap=50"
 ```
 
 **Response:**
 
 ```json
 {
-  "topic": "pricing structure",
-  "document1": {
-    "id": "uuid-123",
-    "filename": "2024_pricing.pdf"
-  },
-  "document2": {
-    "id": "uuid-456",
-    "filename": "2023_pricing.pdf"
-  },
-  "comparison": {
-    "summary": "The 2024 pricing shows a 15% increase...",
-    "differences": [
+  "success": true,
+  "data": {
+    "documentId": "550e8400-e29b-41d4-a716-446655440000",
+    "filename": "my-document.pdf",
+    "chunkCount": 15,
+    "characterCount": 45230,
+    "processingTime": "2.34s",
+    "message": "Successfully ingested \"my-document.pdf\" into 15 chunks"
+  }
+}
+```
+
+---
+
+### POST /api/query
+
+Query the document corpus with natural language.
+
+**Request:**
+
+```json
+{
+  "query": "What are the main features of the product?",
+  "topK": 5,
+  "documentId": null,
+  "rerank": true,
+  "verify": false
+}
+```
+
+| Parameter     | Type    | Default  | Description                       |
+| ------------- | ------- | -------- | --------------------------------- |
+| `query`       | string  | required | The question to ask               |
+| `topK`        | number  | 5        | Number of chunks to retrieve      |
+| `documentId`  | string  | null     | Limit search to specific document |
+| `rerank`      | boolean | false    | Enable cross-encoder re-ranking   |
+| `verify`      | boolean | false    | Enable answer verification        |
+| `temperature` | number  | 0.1      | LLM temperature override          |
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "data": {
+    "answer": "Based on the documentation, the main features include...",
+    "confidence": {
+      "score": 8,
+      "reason": "Direct support found in multiple chunks",
+      "level": "high"
+    },
+    "sources": [
       {
-        "aspect": "Base pricing",
-        "document1": "$99/month",
-        "document2": "$85/month"
+        "filename": "product-docs.pdf",
+        "chunkIndex": 3,
+        "documentId": "550e8400-...",
+        "similarityScore": 0.8934,
+        "crossEncoderScore": 0.9234,
+        "originalRank": 2,
+        "preview": "The product includes automatic scaling..."
       }
     ],
-    "similarities": [
-      "Both offer free trial",
-      "Same enterprise discount structure"
+    "verification": {
+      "isVerified": true,
+      "overallScore": 9,
+      "claims": [...],
+      "unsupportedClaims": [],
+      "summary": "All claims are supported"
+    },
+    "query": "What are the main features of the product?",
+    "topK": 5,
+    "reranked": true,
+    "chunksUsed": 5,
+    "processingTime": "1.23s"
+  }
+}
+```
+
+---
+
+### POST /api/compare
+
+Compare two documents on a specific topic.
+
+**Request:**
+
+```json
+{
+  "documentIds": [
+    "550e8400-e29b-41d4-a716-446655440000",
+    "660f9500-f39c-52e5-b827-557766551111"
+  ],
+  "topic": "pricing strategies",
+  "topK": 5,
+  "structured": true
+}
+```
+
+| Parameter     | Type    | Default  | Description                      |
+| ------------- | ------- | -------- | -------------------------------- |
+| `documentIds` | array   | required | Exactly 2 document UUIDs         |
+| `topic`       | string  | required | What to compare the documents on |
+| `topK`        | number  | 5        | Chunks per document to analyze   |
+| `structured`  | boolean | false    | Return structured JSON           |
+
+**Response (structured=true):**
+
+```json
+{
+  "success": true,
+  "data": {
+    "comparison": {
+      "similarities": [
+        {
+          "point": "Both documents emphasize customer value",
+          "doc1Evidence": { "quote": "...", "source": "doc1.pdf", "chunk": 2 },
+          "doc2Evidence": { "quote": "...", "source": "doc2.pdf", "chunk": 1 }
+        }
+      ],
+      "differences": [
+        {
+          "aspect": "Pricing model",
+          "doc1Position": "Subscription-based",
+          "doc2Position": "One-time purchase",
+          "doc1Source": { "source": "doc1.pdf", "chunk": 5 },
+          "doc2Source": { "source": "doc2.pdf", "chunk": 3 }
+        }
+      ],
+      "uniqueToDoc1": [...],
+      "uniqueToDoc2": [...],
+      "summary": {
+        "overallAssessment": "Documents take contrasting approaches",
+        "agreementLevel": "low",
+        "keyTakeaway": "Fundamental difference in pricing philosophy"
+      },
+      "metadata": {
+        "doc1ChunksAnalyzed": 5,
+        "doc2ChunksAnalyzed": 5,
+        "comparisonConfidence": 8
+      }
+    },
+    "structured": true,
+    "doc1Sources": [...],
+    "doc2Sources": [...],
+    "topic": "pricing strategies",
+    "documentsCompared": ["550e8400-...", "660f9500-..."],
+    "processingTime": "3.45s"
+  }
+}
+```
+
+---
+
+### GET /api/documents
+
+List all ingested documents.
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "data": {
+    "count": 3,
+    "documents": [
+      {
+        "documentId": "550e8400-...",
+        "filename": "product-docs.pdf",
+        "chunkCount": 15,
+        "uploadedAt": "2024-01-15T10:30:00.000Z"
+      }
     ]
   }
 }
@@ -781,438 +667,331 @@ Compare these documents on the topic "${topic}" and return a structured comparis
 
 ---
 
-## 🛠️ Module 4: Server Setup & Configuration
+### DELETE /api/documents/:id
 
-### Step 4.1: Main Server (`server.js`)
+Delete a document and all its chunks.
 
-**Already implemented!** The server is configured with:
-
-- Express web server
-- CORS enabled
-- File upload handling (multer)
-- Three main endpoints: `/upload`, `/query`, `/compare`
-- ChromaDB initialization
-- Error handling middleware
-
-Refer to the [server.js](server.js) file for the complete implementation.
-
----
-
-### Step 4.2: Database Configuration (`src/config/database.js`)
-
-**Already configured!** ChromaDB settings are in place.
-
----
-
-### Step 4.3: LLM Configuration (`src/config/llm.js`)
-
-**Already configured!** Grok API settings are ready.
-
----
-
-### Step 4.4: Error Handler (`src/utils/errorHandler.js`)
-
-```javascript
-module.exports = (err, req, res, next) => {
-  console.error("Error:", err);
-
-  const statusCode = err.statusCode || 500;
-  const message = err.message || "Internal server error";
-
-  res.status(statusCode).json({
-    error: {
-      message,
-      status: statusCode,
-      ...(process.env.NODE_ENV === "development" && { stack: err.stack }),
-    },
-  });
-};
-```
-
----
-
-### Step 4.5: Input Validators (`src/utils/validators.js`)
-
-```javascript
-const Joi = require("joi");
-
-const querySchema = Joi.object({
-  question: Joi.string().required().min(3).max(500),
-  topK: Joi.number().integer().min(1).max(20).default(5),
-});
-
-const compareSchema = Joi.object({
-  topic: Joi.string().required().min(3).max(200),
-  documentId1: Joi.string().required(),
-  documentId2: Joi.string().required(),
-});
-
-function validateQuery(data) {
-  return querySchema.validate(data);
-}
-
-function validateComparison(data) {
-  return compareSchema.validate(data);
-}
-
-module.exports = {
-  validateQuery,
-  validateComparison,
-};
-```
-
----
-
-## 🎓 Design Decisions & Justifications
-
-### 1. Why Chunk Size = 1000 words?
-
-**Reasoning:**
-
-- **Too small (e.g., 100 words):** Context is fragmented, answers lack coherence
-- **Too large (e.g., 5000 words):** Retrieval becomes imprecise, too much noise
-- **1000 words (~1500 tokens):** Sweet spot for most LLMs
-  - Provides sufficient context
-  - Stays well within token limits
-  - Allows embedding models to capture semantic meaning effectively
-
-**Adjustments:**
-
-- Technical documentation: 500-800 words (more precise retrieval)
-- Narrative/legal documents: 1500-2000 words (more context needed)
-
----
-
-### 2. Why 50-word Overlap?
-
-**Reasoning:**
-
-- Prevents loss of context at chunk boundaries
-- Ensures sentences/paragraphs aren't artificially split
-- ~5% overlap is standard practice in RAG systems
-- Minimal storage overhead, maximum context preservation
-
-**Example:**
-
-```
-Chunk 1: [words 0-1000]
-Chunk 2: [words 950-1950] ← 50 words overlap with Chunk 1
-Chunk 3: [words 1900-2900] ← 50 words overlap with Chunk 2
-```
-
----
-
-### 3. Why ChromaDB?
-
-**ChromaDB** is our chosen vector database for this RAG system.
-
-**Advantages:**
-
-- ✅ Easy local setup and development
-- ✅ Free and open-source
-- ✅ Python and JavaScript SDKs
-- ✅ Built-in embedding support
-- ✅ SQL-like query interface
-- ✅ Persistent storage
-
-**Setup:**
-
-```bash
-pip install chromadb
-chroma run --host localhost --port 8000
-```
-
-**Production Considerations:**
-
-- For production at scale, consider:
-  - Docker deployment for ChromaDB
-  - Load balancing for high traffic
-  - Backup strategies for vector collections
-  - Monitoring and alerting
-
----
-
-### 4. Why Grok AI?
-
-**Grok** (from xAI) provides both embeddings and LLM capabilities.
-
-**Advantages:**
-
-- ✅ Single API for both embeddings and text generation
-- ✅ Competitive pricing
-- ✅ High-quality embeddings
-- ✅ Strong reasoning capabilities
-- ✅ API compatible with OpenAI format
-
-**Setup:**
-
-- Sign up at https://x.ai/api
-- Get your API key
-- Add to `.env` file: `GROK_API_KEY=your_key_here`
-
----
-
-### 5. Hallucination Reduction Strategy
-
-**Problem:** LLMs will confidently make up answers when they don't know something.
-
-**Solution: 3-Layer Approach**
-
-**Layer 1: System Prompt Engineering**
-
-```
-"You MUST answer ONLY based on the provided context.
-If the answer is not in the context, say 'I don't have enough information.'"
-```
-
-**Layer 2: Low Temperature Setting**
-
-- `temperature: 0.1` = Less creative, more deterministic
-- Reduces random/hallucinated responses
-
-**Layer 3: Citation Enforcement**
-
-- Force LLM to cite sources
-- Return chunk metadata with every response
-- Users can verify answers against original documents
-
-**Advanced Techniques (Optional):**
-
-- **Confidence scoring:** Ask LLM to rate its confidence (0-10)
-- **Multi-query retrieval:** Rephrase user question, retrieve multiple times, merge results
-- **Re-ranking:** Use cross-encoder model to re-rank retrieved chunks
-
----
-
-### 6. Top-K Retrieval: How Many Chunks?
-
-**Default: K=5**
-
-**Reasoning:**
-
-- K=3: Often too few, misses relevant context
-- K=5: Good balance for most questions
-- K=10+: Too much noise, confuses LLM, higher costs
-
-**Dynamic K (Advanced):**
-
-```javascript
-// Adjust K based on question complexity
-function determineTopK(question) {
-  const wordCount = question.split(" ").length;
-  if (wordCount > 20) return 7; // Complex question
-  if (wordCount > 10) return 5; // Medium question
-  return 3; // Simple question
-}
-```
-
----
-
-## 🧪 Testing Your System
-
-### Test 1: Upload a Document
-
-```bash
-curl -X POST http://localhost:3000/upload \
-  -F "file=@./test_document.pdf"
-```
-
-Expected response:
+**Response:**
 
 ```json
 {
   "success": true,
-  "documentId": "uuid-123",
-  "filename": "test_document.pdf",
-  "chunksCount": 45
+  "data": {
+    "documentId": "550e8400-...",
+    "message": "Document deleted successfully"
+  }
 }
 ```
 
 ---
 
-### Test 2: Query the System
+### GET /health
 
-```bash
-curl -X POST http://localhost:3000/query \
-  -H "Content-Type: application/json" \
-  -d '{
-    "question": "What are the main features?",
-    "topK": 5
-  }'
-```
+Health check with cache statistics.
 
-Expected response:
+**Response:**
 
 ```json
 {
-  "question": "What are the main features?",
-  "answer": "Based on the documentation in test_document.pdf, the main features include...",
-  "citations": [
-    {
-      "documentId": "uuid-123",
-      "filename": "test_document.pdf",
-      "chunkIndex": 3
+  "status": "ok",
+  "service": "RAG System with Grok + ChromaDB",
+  "uptime": "45.2 min",
+  "vectorStore": {
+    "totalDocuments": 3,
+    "totalChunks": 47
+  },
+  "cache": {
+    "embeddings": {
+      "keys": 150,
+      "hits": 1234,
+      "misses": 89,
+      "hitRate": "93.3%"
+    },
+    "queries": {
+      "keys": 12,
+      "hits": 45,
+      "misses": 23,
+      "hitRate": "66.2%"
     }
-  ],
-  "retrievedChunks": 5
+  }
 }
 ```
 
 ---
 
-### Test 3: Compare Two Documents
+## 🛡️ Hallucination Reduction Strategy
+
+The system implements a **3-layer hallucination reduction strategy**:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    HALLUCINATION REDUCTION LAYERS                            │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+  ┌─────────────────────────────────────────────────────────────────────────┐
+  │  LAYER 1: SYSTEM PROMPT ENGINEERING                                      │
+  │                                                                          │
+  │  "You MUST answer ONLY using the provided context chunks.               │
+  │   Do NOT use prior knowledge. If the answer is not in the              │
+  │   context, say: 'I cannot answer this question based on                │
+  │   the provided documents.'"                                             │
+  │                                                                          │
+  │  ✓ Explicit instruction to use ONLY provided context                   │
+  │  ✓ Clear guidance when information is insufficient                     │
+  │  ✓ Citation enforcement for every claim                                │
+  └─────────────────────────────────────────────────────────────────────────┘
+                                     │
+                                     ▼
+  ┌─────────────────────────────────────────────────────────────────────────┐
+  │  LAYER 2: LOW TEMPERATURE (0.1)                                          │
+  │                                                                          │
+  │  Temperature Scale:                                                      │
+  │  ├── 0.0-0.2: Highly deterministic, factual (WE USE THIS)              │
+  │  ├── 0.3-0.5: Balanced creativity                                       │
+  │  ├── 0.6-0.8: More creative, varied                                     │
+  │  └── 0.9-1.0: Maximum creativity                                        │
+  │                                                                          │
+  │  Low temperature = Less random/creative = Fewer hallucinations          │
+  └─────────────────────────────────────────────────────────────────────────┘
+                                     │
+                                     ▼
+  ┌─────────────────────────────────────────────────────────────────────────┐
+  │  LAYER 3: CITATION ENFORCEMENT                                           │
+  │                                                                          │
+  │  Every response includes:                                               │
+  │  ├── Source citations: [Source: filename.pdf, Chunk 3]                 │
+  │  ├── Confidence score: 1-10 with explanation                           │
+  │  └── Source previews: Original text snippets                           │
+  │                                                                          │
+  │  Users can verify claims against original documents                     │
+  └─────────────────────────────────────────────────────────────────────────┘
+                                     │
+                                     ▼
+  ┌─────────────────────────────────────────────────────────────────────────┐
+  │  BONUS: ANSWER VERIFICATION (Optional)                                   │
+  │                                                                          │
+  │  When verify=true:                                                       │
+  │  ├── Second LLM pass fact-checks the answer                            │
+  │  ├── Each claim marked: supported/partially_supported/unsupported      │
+  │  ├── Evidence quotes provided                                           │
+  │  └── Overall verification score                                         │
+  └─────────────────────────────────────────────────────────────────────────┘
+```
+
+### Confidence Score Interpretation
+
+| Score | Level     | Meaning                                        |
+| ----- | --------- | ---------------------------------------------- |
+| 9-10  | Very High | Direct, explicit support from multiple sources |
+| 7-8   | High      | Good support with minor inference              |
+| 5-6   | Medium    | Partial support, some inference needed         |
+| 3-4   | Low       | Weak support, significant inference            |
+| 1-2   | Very Low  | Minimal or no support from context             |
+
+---
+
+## 🔍 Retrieval Design Choices
+
+### Why Top-K = 5?
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         TOP-K SELECTION RATIONALE                            │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+   K=3: Too few
+   ├── May miss relevant context
+   └── Simple questions only
+
+   K=5: Sweet spot (DEFAULT)  ◄──── RECOMMENDED
+   ├── Good balance of context & precision
+   ├── Handles most question complexities
+   └── Reasonable LLM context usage
+
+   K=10+: Too many
+   ├── Noise from irrelevant chunks
+   ├── Confuses the LLM
+   └── Higher API costs
+```
+
+### Why Re-ranking?
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                      BI-ENCODER vs CROSS-ENCODER                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+   BI-ENCODER (Embedding Similarity):
+   ┌─────────────┐     ┌─────────────┐
+   │   Query     │     │  Document   │
+   │  Embedding  │     │  Embedding  │
+   └──────┬──────┘     └──────┬──────┘
+          │                   │
+          └─────────┬─────────┘
+                    │
+               Cosine Sim
+                    │
+               ✗ FAST but less accurate
+               ✗ Independent encodings miss nuance
+
+   CROSS-ENCODER (Joint Scoring):
+   ┌─────────────────────────────────┐
+   │    Query [SEP] Document         │
+   │         Together                │
+   └──────────────┬──────────────────┘
+                  │
+            Relevance Score
+                  │
+               ✓ SLOWER but more accurate
+               ✓ Sees query-document interaction
+
+   OUR APPROACH:
+   1. Fast retrieval: Get top K×3 with embeddings (fast)
+   2. Re-rank: Score top K×3 with cross-encoder (accurate)
+   3. Return: Best K after re-ranking
+```
+
+### Model Used for Re-ranking
+
+- **Model**: `Xenova/ms-marco-MiniLM-L-6-v2`
+- **Type**: Cross-encoder trained on MS MARCO
+- **Quantized**: Yes (faster inference)
+- **First-load**: ~30 seconds (cached afterward)
+
+---
+
+## 💾 Caching Strategy
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                          CACHING ARCHITECTURE                                │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+   ┌──────────────────────────────────────────────────────────────────────┐
+   │                      EMBEDDING CACHE                                  │
+   │                                                                       │
+   │  Purpose: Avoid re-calling Grok API for seen text                    │
+   │  TTL: 24 hours                                                        │
+   │  Max Keys: 10,000                                                     │
+   │  Key: MD5(text)                                                       │
+   │                                                                       │
+   │  Hit Rate Target: >90% after warm-up                                 │
+   └──────────────────────────────────────────────────────────────────────┘
+
+   ┌──────────────────────────────────────────────────────────────────────┐
+   │                       QUERY CACHE                                     │
+   │                                                                       │
+   │  Purpose: Instant responses for repeated queries                     │
+   │  TTL: 1 hour                                                          │
+   │  Max Keys: 1,000                                                      │
+   │  Key: MD5(query + topK + documentId + rerank)                        │
+   │                                                                       │
+   │  Invalidation: On document add/delete                                │
+   └──────────────────────────────────────────────────────────────────────┘
+
+   ┌──────────────────────────────────────────────────────────────────────┐
+   │                     DOCUMENT CACHE                                    │
+   │                                                                       │
+   │  Purpose: Store document metadata                                    │
+   │  TTL: 30 minutes                                                      │
+   │  Max Keys: 500                                                        │
+   └──────────────────────────────────────────────────────────────────────┘
+```
+
+### Cache Invalidation
+
+| Event                 | Action                                   |
+| --------------------- | ---------------------------------------- |
+| New document uploaded | Clear all query cache                    |
+| Document deleted      | Clear query cache + document cache entry |
+| Manual clear          | All caches flushed                       |
+
+---
+
+## 🧪 Testing
+
+### Test Document Upload
 
 ```bash
-curl -X POST http://localhost:3000/compare \
+curl -X POST http://localhost:3000/api/upload \
+  -F "document=@./test.pdf"
+```
+
+### Test Query
+
+```bash
+curl -X POST http://localhost:3000/api/query \
   -H "Content-Type: application/json" \
   -d '{
-    "topic": "pricing",
-    "documentId1": "uuid-123",
-    "documentId2": "uuid-456"
+    "query": "What is the main topic?",
+    "topK": 5,
+    "rerank": true
+  }'
+```
+
+### Test Comparison
+
+```bash
+curl -X POST http://localhost:3000/api/compare \
+  -H "Content-Type: application/json" \
+  -d '{
+    "documentIds": ["uuid-1", "uuid-2"],
+    "topic": "key differences",
+    "structured": true
+  }'
+```
+
+### Test with Verification
+
+```bash
+curl -X POST http://localhost:3000/api/query \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "What are the system requirements?",
+    "verify": true
   }'
 ```
 
 ---
 
-## 🚀 Deployment Checklist
+## 🔧 Troubleshooting
 
-### Before Production:
+### ChromaDB Connection Failed
 
-- [ ] Add authentication/authorization (JWT tokens)
-- [ ] Rate limiting (prevent abuse)
-- [ ] Input sanitization (prevent injection attacks)
-- [ ] Logging system (Winston/Morgan)
-- [ ] Monitoring (Prometheus/New Relic)
-- [ ] Containerization (Docker)
-- [ ] CI/CD pipeline (GitHub Actions)
-- [ ] API documentation (Swagger/OpenAPI)
-- [ ] Load testing (Artillery/k6)
-- [ ] Backup strategy for vector database
+```bash
+# Ensure ChromaDB is running
+chroma run --host localhost --port 8000
 
----
+# Check if port is in use
+netstat -an | findstr 8000
+```
 
-## 📚 Additional Features (Future Enhancements)
+### Grok API Errors
 
-1. **Document Management:**
-   - List all uploaded documents
-   - Delete documents (and their vectors)
-   - Update documents (re-process and re-embed)
+| Error            | Solution                         |
+| ---------------- | -------------------------------- |
+| 401 Unauthorized | Check `GROK_API_KEY` in `.env`   |
+| 429 Rate Limited | System auto-retries with backoff |
+| 500 Server Error | System auto-retries 3 times      |
 
-2. **Query History:**
-   - Store user queries for analytics
-   - Track popular questions
-   - Feedback loop (thumbs up/down)
+### Out of Memory (Re-ranking)
 
-3. **Multi-tenancy:**
-   - Separate collections per user/organization
-   - Access control per document
+The cross-encoder model downloads on first use (~100MB). Ensure sufficient memory:
 
-4. **Hybrid Search:**
-   - Combine semantic (vector) search with keyword (BM25) search
-   - Often improves retrieval quality
+```bash
+# Check memory
+node --max-old-space-size=4096 server.js
+```
 
-5. **Advanced RAG Techniques:**
-   - **HyDE (Hypothetical Document Embeddings):** Generate hypothetical answer, embed it, search with that
-   - **Reranking:** Use cross-encoder to re-score retrieved chunks
-   - **Query decomposition:** Break complex questions into sub-questions
+### Slow First Query
+
+First query loads the cross-encoder model (~30s). Subsequent queries are fast.
 
 ---
 
-## 🆘 Troubleshooting
+## 🙏 Acknowledgments
 
-### Issue: Embeddings API timeout
-
-**Solution:** Batch your embedding requests, add retry logic with exponential backoff.
-
-### Issue: Vector search returns irrelevant results
-
-**Solution:**
-
-- Try different embedding models
-- Adjust chunk size/overlap
-- Increase top-K and let LLM filter
-- Implement re-ranking
-
-### Issue: LLM still hallucinates
-
-**Solution:**
-
-- Lower temperature (try 0.0)
-- Strengthen system prompt
-- Add examples of correct behavior (few-shot prompting)
-- Increase context quality (better chunking strategy)
-
-### Issue: Slow response times
-
-**Solution:**
-
-- Cache frequent queries and embeddings
-- Batch embedding requests
-- Reduce max_tokens in LLM call
-- Optimize ChromaDB (add indexes, tune parameters)
-- Consider async processing for large documents
-
----
-
-## 📖 Key Resources
-
-- [Grok API Documentation](https://x.ai/api)
-- [ChromaDB Documentation](https://docs.trychroma.com/)
-- [ChromaDB GitHub](https://github.com/chroma-core/chroma)
-- [RAG Best Practices](https://arxiv.org/abs/2312.10997)
-- [Advanced RAG Techniques](https://python.langchain.com/docs/use_cases/question_answering/)
-
----
-
-## 🎯 Summary: Implementation Order
-
-1. ✅ **Setup** (Phase 1): Install dependencies, setup ChromaDB server, configure Grok API
-2. 🔧 **Document Ingestion** (Module 1): Parser → Chunking → Grok Embeddings → ChromaDB Storage
-3. 🔍 **Query System** (Module 2): Query embedding → ChromaDB Retrieval → Grok LLM → Response
-4. 🔄 **Comparison** (Module 3): Multi-document retrieval → Comparison prompt → Structured output
-5. 🚀 **Server** (Module 4): Express server, controllers, error handling
-6. 🧪 **Testing**: Test all endpoints thoroughly
-7. 📦 **Production**: Deploy with proper security and monitoring
-
----
-
-## 🏗️ Quick Start Guide
-
-1. **Install dependencies:**
-
-   ```bash
-   npm install
-   ```
-
-2. **Setup ChromaDB:**
-
-   ```bash
-   pip install chromadb
-   chroma run --host localhost --port 8000
-   ```
-
-3. **Configure environment:**
-
-   ```bash
-   cp .env.example .env
-   # Edit .env and add your GROK_API_KEY
-   ```
-
-4. **Start the server:**
-
-   ```bash
-   npm start
-   # or for development:
-   npm run dev
-   ```
-
-5. **Test the system:**
-   - Upload a document: `POST /upload`
-   - Query: `POST /query`
-   - Compare: `POST /compare`
-
----
-
-**Good luck building your production-grade RAG system with Grok AI + ChromaDB! 🚀**
-
-If you encounter issues, refer to the troubleshooting section or consult the key resources listed above.
+- [Grok AI (xAI)](https://x.ai/) - LLM and Embeddings
+- [ChromaDB](https://www.trychroma.com/) - Vector Database
+- [Hugging Face](https://huggingface.co/) - Transformers.js
+- [Express.js](https://expressjs.com/) - Web Framework
