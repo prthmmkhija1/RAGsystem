@@ -9,14 +9,9 @@ Upload your documents (PDF, DOCX, TXT, Markdown), ask questions in plain English
 ## How It Works (High-Level)
 
 ```mermaid
-flowchart LR
-    A[📄 Upload Document] --> B[✂️ Chunk Text]
-    B --> C[🔢 Generate Embeddings]
-    C --> D[💾 Store in ChromaDB]
-    D --> E[❓ Ask a Question]
-    E --> F[🔍 Search Similar Chunks]
-    F --> G[🤖 LLM Generates Answer]
-    G --> H[✅ Answer + Citations]
+flowchart TD
+    A[Upload Document] --> B[Chunk Text] --> C[Generate Embeddings] --> D[Store in ChromaDB]
+    D --> E[Ask a Question] --> F[Search Similar Chunks] --> G[LLM Generates Answer] --> H[Answer + Citations]
 ```
 
 **In simple words:**
@@ -33,16 +28,11 @@ flowchart LR
 
 ```mermaid
 flowchart TD
-    A[User uploads file] --> B{File type?}
-    B -->|PDF| C[PyPDF2 extracts text]
-    B -->|DOCX| D[python-docx extracts text]
-    B -->|TXT/MD| E[Read raw text]
-    C --> F[Chunk text into ~500 char pieces]
-    D --> F
-    E --> F
-    F --> G[Generate ONNX embeddings for each chunk]
-    G --> H[Store chunks + embeddings in ChromaDB]
-    H --> I[Return document ID + chunk count]
+    A[Upload file] --> B{PDF / DOCX / TXT?}
+    B --> C[Extract text]
+    C --> D[Chunk ~500 chars]
+    D --> E[ONNX embeddings]
+    E --> F[Store in ChromaDB]
 ```
 
 ---
@@ -51,18 +41,17 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    A[User sends question] --> B[Convert question to embedding]
-    B --> C[Search ChromaDB for top-k similar chunks]
-    C --> D{Re-rank enabled?}
-    D -->|Yes| E[BM25 keyword re-ranking]
-    D -->|No| F[Use vector results as-is]
-    E --> G[Send top chunks + question to Groq LLM]
+    A[Question] --> B[Embed query]
+    B --> C[Search top-k chunks]
+    C --> D{Re-rank?}
+    D -->|Yes| E[BM25 re-rank]
+    D -->|No| F[As-is]
+    E --> G[LLM + citations]
     F --> G
-    G --> H[LLM generates answer with citations]
-    H --> I{Verify enabled?}
-    I -->|Yes| J[Second LLM pass fact-checks each claim]
-    I -->|No| K[Return answer + confidence score]
-    J --> K
+    G --> H{Verify?}
+    H -->|Yes| I[Fact-check pass]
+    H -->|No| J[Return answer]
+    I --> J
 ```
 
 ---
@@ -191,15 +180,15 @@ curl -X POST http://localhost:3000/api/compare \
 
 ```mermaid
 flowchart TD
-    A[User Question + Retrieved Chunks] --> B[Layer 1: Strict System Prompt]
-    B --> C[Layer 2: Low Temperature 0.1]
-    C --> D[Layer 3: Citation Enforcement]
-    D --> E{Every claim cited?}
-    E -->|Yes| F[✅ Trustworthy Answer]
-    E -->|No| G[⚠️ Flagged as potential hallucination]
-    F --> H{Verify flag on?}
-    H -->|Yes| I[Second LLM pass fact-checks each claim]
-    H -->|No| J[Return answer + confidence 1-10]
+    A[Question + Chunks] --> B[Strict Prompt]
+    B --> C[Low Temp 0.1]
+    C --> D[Cite every claim]
+    D --> E{All cited?}
+    E -->|Yes| F[Trusted]
+    E -->|No| G[Flagged]
+    F --> H{Verify?}
+    H -->|Yes| I[Fact-check]
+    H -->|No| J[Return]
     I --> J
 ```
 
