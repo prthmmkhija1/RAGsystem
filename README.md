@@ -9,10 +9,9 @@ Upload your documents (PDF, DOCX, TXT, Markdown), ask questions in plain English
 ## How It Works (High-Level)
 
 ```mermaid
-flowchart TD
-    A([Upload Document]) --> B([Chunk Text]) --> C([Generate Embeddings]) --> D[(Store in ChromaDB)]
-    D --> E([Ask a Question]) --> F([Search Similar Chunks])
-    F --> G([LLM Generates Answer]) --> H([Answer + Citations])
+flowchart LR
+    A([Upload]) --> B([Chunk]) --> C([Embed]) --> D[(ChromaDB)]
+    D --> E([Query]) --> F([Search]) --> G([LLM]) --> H([Answer])
 ```
 
 **In simple words:**
@@ -28,10 +27,8 @@ flowchart TD
 ## Document Upload & Ingestion Flow
 
 ```mermaid
-flowchart TD
-    A([Upload File]) --> B{PDF / DOCX / TXT?}
-    B --> C([Extract Text]) --> D([Chunk ~500 chars])
-    D --> E([ONNX Embeddings]) --> F[(Store in ChromaDB)]
+flowchart LR
+    A([Upload]) --> B{Format?} --> C([Parse]) --> D([Chunk]) --> E([Embed]) --> F[(Store)]
 ```
 
 ---
@@ -39,14 +36,14 @@ flowchart TD
 ## Query Flow
 
 ```mermaid
-flowchart TD
-    A([Question]) --> B([Embed Query]) --> C([Search Top-K])
-    C --> D{Re-rank?}
-    D -- Yes --> E([BM25 Re-rank]) --> F
-    D -- No --> F([LLM + Citations])
+flowchart LR
+    A([Question]) --> B([Embed]) --> C([Top-K])
+    C --> D{Rerank?}
+    D -- Y --> E([BM25]) --> F([LLM])
+    D -- N --> F
     F --> G{Verify?}
-    G -- Yes --> H([Fact-check]) --> I([Return Answer])
-    G -- No --> I
+    G -- Y --> H([Check]) --> I([Answer])
+    G -- N --> I
 ```
 
 ---
@@ -174,14 +171,13 @@ curl -X POST http://localhost:3000/api/compare \
 ## How Hallucination Reduction Works
 
 ```mermaid
-flowchart TD
-    A([Question + Chunks]) --> B([Strict System Prompt])
-    B --> C([Low Temp 0.1]) --> D([Cite Every Claim])
-    D --> E{All Cited?}
-    E -- Yes --> F([Trusted]) --> G{Verify?}
-    E -- No --> H([Flagged])
-    G -- Yes --> I([Fact-check]) --> J([Return])
-    G -- No --> J
+flowchart LR
+    A([Input]) --> B([Strict Prompt]) --> C([Temp 0.1]) --> D([Cite])
+    D --> E{Cited?}
+    E -- Y --> F{Verify?}
+    E -- N --> G([Flag])
+    F -- Y --> H([Check]) --> I([Return])
+    F -- N --> I
 ```
 
 | Layer                | What it does                                                                                     |
