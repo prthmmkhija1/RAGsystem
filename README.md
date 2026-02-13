@@ -9,9 +9,10 @@ Upload your documents (PDF, DOCX, TXT, Markdown), ask questions in plain English
 ## How It Works (High-Level)
 
 ```mermaid
-flowchart LR
-    A[Upload Document] --> B[Chunk Text] --> C[Generate Embeddings] --> D[Store in ChromaDB]
-    D --> E[Ask a Question] --> F[Search Similar Chunks] --> G[LLM Generates Answer] --> H[Answer + Citations]
+flowchart TD
+    A([Upload Document]) --> B([Chunk Text]) --> C([Generate Embeddings]) --> D[(Store in ChromaDB)]
+    D --> E([Ask a Question]) --> F([Search Similar Chunks])
+    F --> G([LLM Generates Answer]) --> H([Answer + Citations])
 ```
 
 **In simple words:**
@@ -27,8 +28,10 @@ flowchart LR
 ## Document Upload & Ingestion Flow
 
 ```mermaid
-flowchart LR
-    A[Upload file] --> B{PDF / DOCX / TXT?} --> C[Extract text] --> D[Chunk ~500 chars] --> E[ONNX embeddings] --> F[Store in ChromaDB]
+flowchart TD
+    A([Upload File]) --> B{PDF / DOCX / TXT?}
+    B --> C([Extract Text]) --> D([Chunk ~500 chars])
+    D --> E([ONNX Embeddings]) --> F[(Store in ChromaDB)]
 ```
 
 ---
@@ -36,14 +39,14 @@ flowchart LR
 ## Query Flow
 
 ```mermaid
-flowchart LR
-    A[Question] --> B[Embed query] --> C[Search top-k]
+flowchart TD
+    A([Question]) --> B([Embed Query]) --> C([Search Top-K])
     C --> D{Re-rank?}
-    D -->|Yes| E[BM25] --> G[LLM + citations]
-    D -->|No| G
-    G --> H{Verify?}
-    H -->|Yes| I[Fact-check] --> J[Return answer]
-    H -->|No| J
+    D -- Yes --> E([BM25 Re-rank]) --> F
+    D -- No --> F([LLM + Citations])
+    F --> G{Verify?}
+    G -- Yes --> H([Fact-check]) --> I([Return Answer])
+    G -- No --> I
 ```
 
 ---
@@ -171,13 +174,14 @@ curl -X POST http://localhost:3000/api/compare \
 ## How Hallucination Reduction Works
 
 ```mermaid
-flowchart LR
-    A[Question + Chunks] --> B[Strict Prompt] --> C[Low Temp 0.1] --> D[Cite every claim]
-    D --> E{All cited?}
-    E -->|Yes| F[Trusted] --> H{Verify?}
-    E -->|No| G[Flagged]
-    H -->|Yes| I[Fact-check] --> J[Return]
-    H -->|No| J
+flowchart TD
+    A([Question + Chunks]) --> B([Strict System Prompt])
+    B --> C([Low Temp 0.1]) --> D([Cite Every Claim])
+    D --> E{All Cited?}
+    E -- Yes --> F([Trusted]) --> G{Verify?}
+    E -- No --> H([Flagged])
+    G -- Yes --> I([Fact-check]) --> J([Return])
+    G -- No --> J
 ```
 
 | Layer                | What it does                                                                                     |
