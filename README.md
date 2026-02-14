@@ -1,49 +1,66 @@
 # AI RAG System
 
-A **Retrieval-Augmented Generation** system built with Python, FastAPI, ChromaDB, and Groq LLM.
+A production-grade **Retrieval-Augmented Generation** system built with FastAPI, ChromaDB, and Groq LLM.
 
-Upload your documents (PDF, DOCX, TXT, Markdown), ask questions in plain English, and get accurate answers **backed by citations from your own files** — not made-up info.
+Upload documents (PDF, DOCX, TXT, Markdown), ask questions in natural language, and get accurate answers **grounded in your own files with per-claim citations** — not hallucinated content.
 
 ---
 
-## How It Works (High-Level)
+## System Architecture
 
-```mermaid
-flowchart LR
-    A([Upload]) --> B([Chunk]) --> C([Embed]) --> D[(ChromaDB)]
-    D --> E([Query]) --> F([Search]) --> G([LLM]) --> H([Answer])
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              CLIENT (REST API)                              │
+│                    Swagger UI / curl / any HTTP client                       │
+└────────┬──────────────────────┬──────────────────────┬──────────────────────┘
+         │                      │                      │
+    POST /upload           POST /query           POST /compare
+         │                      │                      │
+┌────────▼──────────────────────▼──────────────────────▼──────────────────────┐
+│                          FastAPI  (Routes Layer)                             │
+│              documents.py      query.py       compare.py                    │
+└────────┬──────────────────────┬──────────────────────┬──────────────────────┘
+         │                      │                      │
+┌────────▼──────────────────────▼──────────────────────▼──────────────────────┐
+│                     RAG Orchestration  (rag_service.py)                      │
+│                                                                             │
+│   ┌──────────────┐    ┌──────────────┐    ┌──────────────┐                  │
+│   │  INGESTION   │    │    QUERY     │    │   COMPARE    │                  │
+│   │              │    │              │    │              │                  │
+│   │ Parse file   │    │ Embed query  │    │ Embed topic  │                  │
+│   │ Chunk text   │    │ Vector search│    │ Search doc1  │                  │
+│   │ Embed chunks │    │ Re-rank(opt) │    │ Search doc2  │                  │
+│   │ Store vectors│    │ LLM answer   │    │ LLM compare  │                  │
+│   │              │    │ Verify (opt) │    │ JSON / text  │                  │
+│   └──────┬───────┘    └──────┬───────┘    └──────┬───────┘                  │
+└──────────┼───────────────────┼───────────────────┼──────────────────────────┘
+           │                   │                   │
+     ┌─────▼─────┐      ┌─────▼─────┐       ┌─────▼─────┐
+     │ EMBEDDING │      │   LLM     │       │  RERANK   │
+     │ SERVICE   │      │  SERVICE  │       │  SERVICE  │
+     │           │      │           │       │           │
+     │ ONNX      │      │ Groq API  │       │ BM25 +    │
+     │ MiniLM-L6 │      │ LLaMA 3.3 │       │ Vector    │
+     │ (local)   │      │ 70B       │       │ hybrid    │
+     └─────┬─────┘      └─────┬─────┘       └───────────┘
+           │                   │
+     ┌─────▼─────┐      ┌─────▼─────┐
+     │ CHROMADB  │      │  CACHE    │
+     │           │      │  SERVICE  │
+     │ Persistent│      │           │
+     │ cosine    │      │ Embed 24h │
+     │ similarity│      │ Query 1h  │
+     └───────────┘      └───────────┘
 ```
 
-**In simple words:**
+### Data Flow
 
-1. You upload a file → it gets split into small pieces (chunks)
-2. Each chunk is converted into numbers (embeddings) that capture its meaning
-3. When you ask a question, the system finds the most relevant chunks
-4. Those chunks are sent to an LLM (Groq) which writes an answer using **only** your documents
-5. Every claim in the answer includes a citation showing where it came from
-
----
-
-## Document Upload & Ingestion Flow
-
-```mermaid
-flowchart LR
-    A([Upload]) --> B{Format?} --> C([Parse]) --> D([Chunk]) --> E([Embed]) --> F[(Store)]
 ```
+UPLOAD:  File → Parse (PDF/DOCX/TXT/MD) → Sentence-Aware Chunking → ONNX Embed → ChromaDB
 
----
+QUERY:   Question → Embed → Top-K Search → [Re-rank] → LLM + Citations → [Verify] → Answer
 
-## Query Flow
-
-```mermaid
-flowchart LR
-    A([Question]) --> B([Embed]) --> C([Top-K])
-    C --> D{Rerank?}
-    D -- Y --> E([BM25]) --> F([LLM])
-    D -- N --> F
-    F --> G{Verify?}
-    G -- Y --> H([Check]) --> I([Answer])
-    G -- N --> I
+COMPARE: Topic → Embed → Search Doc1 + Doc2 → LLM Comparison → Structured JSON / Text
 ```
 
 ---
@@ -53,31 +70,31 @@ flowchart LR
 ```
 ai-rag-system/
 ├── app/
-│   ├── __init__.py            # FastAPI app setup (CORS, routes, lifespan)
+│   ├── __init__.py                # FastAPI app (CORS, routes, lifespan)
 │   ├── config/
-│   │   ├── database.py        # ChromaDB settings
-│   │   └── llm.py             # Groq API settings
+│   │   ├── database.py            # ChromaDB settings
+│   │   └── llm.py                 # Groq API & embedding config
 │   ├── routes/
-│   │   ├── documents.py       # Upload / list / delete documents
-│   │   ├── query.py           # Ask questions
-│   │   └── compare.py         # Compare two documents
+│   │   ├── documents.py           # POST /upload, GET /list, DELETE /{id}
+│   │   ├── query.py               # POST /query
+│   │   └── compare.py             # POST /compare
 │   ├── services/
 │   │   ├── embeddings/
 │   │   │   └── embedding_service.py   # ONNX embeddings (all-MiniLM-L6-v2)
 │   │   ├── llm/
-│   │   │   └── llm_service.py         # Groq chat completions
+│   │   │   └── llm_service.py         # Groq chat completions + prompts
 │   │   └── rag/
-│   │       ├── rag_service.py         # RAG orchestrator
+│   │       ├── rag_service.py         # RAG orchestrator (ingest/query/compare)
 │   │       └── rerank_service.py      # BM25 keyword re-ranker
 │   ├── vectorstore/
-│   │   └── vector_store_service.py    # ChromaDB operations
+│   │   └── vector_store_service.py    # ChromaDB CRUD operations
 │   └── utils/
-│       ├── cache_service.py       # In-memory TTL cache
-│       ├── chunking_service.py    # Text chunking logic
-│       ├── document_parser.py     # File parsing (PDF/DOCX/TXT/MD)
-│       ├── error_handler.py       # Custom exceptions
-│       └── validators.py          # Request validation
-├── main.py                # Entry point — starts the server
+│       ├── cache_service.py           # In-memory TTL cache
+│       ├── chunking_service.py        # Sentence-aware text chunking
+│       ├── document_parser.py         # File parsing (PDF/DOCX/TXT/MD)
+│       ├── error_handler.py           # Custom exception classes
+│       └── validators.py             # Pydantic request models
+├── main.py                # Server entry point (Uvicorn)
 ├── requirements.txt       # Python dependencies
 ├── .env                   # API keys & config (not committed)
 └── README.md
@@ -87,16 +104,16 @@ ai-rag-system/
 
 ## Features
 
-| #   | Feature                | What it does                                                              |
-| --- | ---------------------- | ------------------------------------------------------------------------- |
-| 1   | **Document Upload**    | Upload PDF, DOCX, TXT, or Markdown files via API                          |
-| 2   | **Smart Chunking**     | Splits text at sentence boundaries (~500 chars each, 100 char overlap)    |
-| 3   | **Embeddings**         | Converts text to 384-dim vectors using ONNX (runs locally, no GPU needed) |
-| 4   | **Vector Storage**     | Stores everything in ChromaDB with cosine similarity search               |
-| 5   | **Query**              | Ask questions → get answers with per-claim citations                      |
-| 6   | **Compare**            | Compare two documents side-by-side on any topic                           |
-| 7   | **Structured Compare** | Get JSON output: similarities, differences, unique points                 |
-| 8   | **Anti-Hallucination** | 3-layer strategy ensures answers come from your documents only            |
+| # | Feature | Description |
+|---|---------|-------------|
+| 1 | **Document Upload** | Upload PDF, DOCX, TXT, or Markdown files via multipart form |
+| 2 | **Intelligent Chunking** | Sentence-boundary-aware splitting with configurable size (100–10,000 chars) and overlap (0–500 chars) |
+| 3 | **Embeddings** | 384-dim vectors via ONNX runtime (`all-MiniLM-L6-v2`) — local, free, ~100 MB RAM |
+| 4 | **Vector Storage** | ChromaDB PersistentClient with cosine similarity, batched insertion |
+| 5 | **Query with Citations** | Top-K retrieval → LLM answer with `[Source: filename, Chunk N]` citations + confidence score |
+| 6 | **Document Comparison** | Compare two documents on any topic — plain text or structured JSON |
+| 7 | **Structured Output** | JSON with similarities, differences, unique points, agreement level |
+| 8 | **Hallucination Reduction** | 3-layer strategy: strict prompt + low temperature + citation enforcement + optional verification |
 
 ---
 
@@ -108,7 +125,7 @@ ai-rag-system/
 pip install -r requirements.txt
 ```
 
-### 2. Set your API key
+### 2. Configure environment
 
 Create a `.env` file:
 
@@ -133,21 +150,23 @@ Open **http://localhost:3000/docs** for the interactive Swagger UI.
 
 ## API Endpoints
 
-| Method   | Endpoint                | Description                   |
-| -------- | ----------------------- | ----------------------------- |
-| `GET`    | `/health`               | Health check + stats          |
-| `POST`   | `/api/documents/upload` | Upload a document (form-data) |
-| `GET`    | `/api/documents`        | List all documents            |
-| `GET`    | `/api/documents/stats`  | Document & chunk statistics   |
-| `DELETE` | `/api/documents/{id}`   | Delete a document             |
-| `POST`   | `/api/query`            | Ask a question                |
-| `POST`   | `/api/compare`          | Compare two documents         |
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/health` | Health check + vector store stats |
+| `POST` | `/api/documents/upload` | Upload a document (multipart form-data) |
+| `GET` | `/api/documents` | List all uploaded documents |
+| `GET` | `/api/documents/stats` | Collection statistics |
+| `DELETE` | `/api/documents/{id}` | Delete a document and its chunks |
+| `POST` | `/api/query` | Ask a question against the corpus |
+| `POST` | `/api/compare` | Compare two documents on a topic |
 
-### Example: Upload
+### Example: Upload a document
 
 ```bash
 curl -X POST http://localhost:3000/api/documents/upload \
-  -F "file=@resume.pdf"
+  -F "file=@report.pdf" \
+  -F "chunk_size=500" \
+  -F "chunk_overlap=100"
 ```
 
 ### Example: Query
@@ -155,63 +174,84 @@ curl -X POST http://localhost:3000/api/documents/upload \
 ```bash
 curl -X POST http://localhost:3000/api/query \
   -H "Content-Type: application/json" \
-  -d '{"query": "What skills does the candidate have?", "top_k": 5}'
+  -d '{
+    "query": "What are the key findings?",
+    "top_k": 5,
+    "verify": true,
+    "rerank": true
+  }'
 ```
 
-### Example: Compare
+### Example: Compare two documents
 
 ```bash
 curl -X POST http://localhost:3000/api/compare \
   -H "Content-Type: application/json" \
-  -d '{"document_ids": ["id-1", "id-2"], "topic": "experience", "structured": true}'
+  -d '{
+    "document_ids": ["uuid-1", "uuid-2"],
+    "topic": "methodology",
+    "structured": true
+  }'
 ```
 
 ---
 
-## How Hallucination Reduction Works
+## Hallucination Reduction Strategy
 
-```mermaid
-flowchart LR
-    A([Input]) --> B([Strict Prompt]) --> C([Temp 0.1]) --> D([Cite])
-    D --> E{Cited?}
-    E -- Y --> F{Verify?}
-    E -- N --> G([Flag])
-    F -- Y --> H([Check]) --> I([Return])
-    F -- N --> I
+```
+  ┌──────────────┐     ┌──────────────┐     ┌──────────────┐     ┌──────────────┐
+  │   LAYER 1    │     │   LAYER 2    │     │   LAYER 3    │     │   LAYER 4    │
+  │              │     │              │     │              │     │  (optional)  │
+  │ Strict       │────→│ Low          │────→│ Citation     │────→│ Verification │
+  │ System       │     │ Temperature  │     │ Enforcement  │     │ Pass         │
+  │ Prompt       │     │ (0.1)        │     │              │     │              │
+  │              │     │              │     │ [Source: file │     │ Second LLM   │
+  │ "Answer ONLY │     │ Near-        │     │  Chunk N]    │     │ call checks  │
+  │  from context│     │ deterministic│     │              │     │ each claim   │
+  │  provided"   │     │ output       │     │ Confidence   │     │ against      │
+  │              │     │              │     │ score 1-10   │     │ source text  │
+  └──────────────┘     └──────────────┘     └──────────────┘     └──────────────┘
 ```
 
-| Layer                | What it does                                                                                     |
-| -------------------- | ------------------------------------------------------------------------------------------------ |
-| **Strict Prompt**    | Tells the LLM: "Answer ONLY from the provided chunks. Say 'I cannot answer' if info is missing." |
-| **Low Temperature**  | Set to 0.1 — makes output near-deterministic, reduces creative gap-filling                       |
-| **Citations**        | Every claim must include `[Source: filename, Chunk N]` — uncited claims = red flag               |
-| **Confidence Score** | 1-10 rating with reasoning. Below 5 = weak support in documents                                  |
-| **Verification**     | Optional second LLM pass checks each claim against source chunks                                 |
+| Layer | Mechanism | Effect |
+|-------|-----------|--------|
+| **Strict Prompt** | System prompt forces LLM to use only provided context | Prevents reliance on training data |
+| **Low Temperature** | `temperature=0.1` for near-deterministic output | Reduces creative gap-filling |
+| **Citation Enforcement** | Every claim must cite `[Source: filename, Chunk N]` | Makes unsupported claims visible |
+| **Confidence Score** | LLM self-rates 1–10 with reasoning | Flags weak answers (score < 5) |
+| **Verification** | Optional second LLM pass fact-checks claims against sources | Catches remaining hallucinations |
 
 ---
 
 ## Tech Stack
 
-| Component         | Technology              | Why                                              |
-| ----------------- | ----------------------- | ------------------------------------------------ |
-| **API Framework** | FastAPI                 | Fast, async, auto-generates Swagger docs         |
-| **LLM**           | Groq (llama-3.3-70b)    | Free tier, fast inference, high quality          |
-| **Embeddings**    | ONNX (all-MiniLM-L6-v2) | ~100MB RAM vs ~2GB for PyTorch — same quality    |
-| **Vector DB**     | ChromaDB                | No separate server, persists to disk, easy setup |
-| **Re-ranking**    | BM25                    | Keyword matching complements semantic search     |
-| **Caching**       | In-memory TTL           | Embeddings 24h, queries 1h, documents 30min      |
+| Component | Technology | Why |
+|-----------|------------|-----|
+| **API Framework** | FastAPI + Uvicorn | Async, auto-generated Swagger docs, high performance |
+| **LLM** | Groq API (LLaMA 3.3 70B) | Free tier, fast inference, OpenAI-compatible |
+| **Embeddings** | ONNX Runtime (all-MiniLM-L6-v2) | ~100 MB RAM vs ~2 GB for PyTorch, same quality |
+| **Vector DB** | ChromaDB (PersistentClient) | Embedded, no server process, cosine similarity |
+| **Re-ranking** | Custom BM25 + Vector hybrid | Lightweight keyword overlap improves retrieval |
+| **Caching** | In-memory TTL cache | Embeddings 24h, queries 1h — avoids redundant work |
+| **Validation** | Pydantic v2 | Type-safe request/response models |
+| **HTTP Client** | httpx (async) | Non-blocking LLM API calls with retry logic |
 
 ---
 
 ## Environment Variables
 
-| Variable          | Default | Description                           |
-| ----------------- | ------- | ------------------------------------- |
-| `GROQ_API_KEY`    | —       | Your Groq API key (required)          |
-| `PORT`            | `3000`  | Server port                           |
-| `CHUNK_SIZE`      | `500`   | Characters per chunk                  |
-| `CHUNK_OVERLAP`   | `100`   | Overlap between chunks                |
-| `LLM_TEMPERATURE` | `0.1`   | LLM creativity (lower = more factual) |
-| `LLM_MAX_TOKENS`  | `2048`  | Max response length                   |
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `GROQ_API_KEY` | — | Groq API key (**required**) |
+| `GROQ_API_URL` | `https://api.groq.com/openai/v1` | Groq API base URL |
+| `GROQ_MODEL` | `llama-3.3-70b-versatile` | LLM model name |
+| `EMBEDDING_MODEL` | `all-MiniLM-L6-v2` | Local embedding model |
+| `PORT` | `3000` | Server port |
+| `CHUNK_SIZE` | `500` | Characters per chunk |
+| `CHUNK_OVERLAP` | `100` | Overlap between chunks |
+| `TEMPERATURE` | `0.1` | LLM temperature (lower = more factual) |
+| `MAX_TOKENS` | `2048` | Max LLM response tokens |
+| `CHROMA_PERSIST_DIR` | `./chroma_data` | ChromaDB storage path |
+| `CHROMA_COLLECTION` | `rag_documents` | ChromaDB collection name |
 
 ---
