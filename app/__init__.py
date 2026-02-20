@@ -2,9 +2,11 @@
 FastAPI Application
 Main entry point — registers routes, middleware, and exception handlers.
 """
+import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 
 from app.utils.error_handler import AppError, app_error_handler, generic_error_handler
 from app.utils import cache_service
@@ -68,3 +70,13 @@ async def health():
         },
         "cache": cache_service.get_stats(),
     }
+
+
+# ─── Client UI ────────────────────────────────────────────
+_CLIENT_HTML = os.path.join(os.path.dirname(os.path.dirname(__file__)), "client.html")
+
+
+@app.get("/", include_in_schema=False)
+async def serve_client():
+    """Serve the client HTML UI."""
+    return FileResponse(_CLIENT_HTML, media_type="text/html")

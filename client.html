@@ -1,0 +1,853 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI RAG System</title>
+  <style>
+    /* ── Reset & Base ─────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0f1117;
+      --surface: #1a1d27;
+      --surface2: #232631;
+      --border: #2e3140;
+      --text: #e1e4ed;
+      --text-dim: #8b8fa3;
+      --primary: #6c5ce7;
+      --primary-hover: #7c6ef7;
+      --accent: #00cec9;
+      --success: #00b894;
+      --warning: #fdcb6e;
+      --danger: #e17055;
+      --radius: 10px;
+      --shadow: 0 4px 24px rgba(0,0,0,.35);
+    }
+    body {
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      min-height: 100vh;
+    }
+    a { color: var(--primary); text-decoration: none; }
+
+    /* ── Layout ───────────────────────────────────────── */
+    .app-header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 16px 32px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: sticky; top: 0; z-index: 100;
+    }
+    .app-header h1 { font-size: 1.3rem; font-weight: 700; }
+    .app-header h1 span { color: var(--primary); }
+    .health-badge {
+      font-size: .78rem; padding: 4px 14px; border-radius: 20px;
+      background: var(--surface2); color: var(--text-dim); cursor: pointer;
+      border: 1px solid var(--border); transition: .2s;
+    }
+    .health-badge.ok { border-color: var(--success); color: var(--success); }
+    .health-badge.err { border-color: var(--danger); color: var(--danger); }
+
+    .container { max-width: 1200px; margin: 0 auto; padding: 28px 24px 60px; }
+
+    /* ── Tabs ─────────────────────────────────────────── */
+    .tabs {
+      display: flex; gap: 4px; margin-bottom: 28px;
+      border-bottom: 2px solid var(--border); padding-bottom: 0;
+    }
+    .tab-btn {
+      padding: 10px 22px; font-size: .9rem; font-weight: 600;
+      background: none; border: none; color: var(--text-dim);
+      cursor: pointer; border-bottom: 2px solid transparent;
+      margin-bottom: -2px; transition: .2s;
+    }
+    .tab-btn:hover { color: var(--text); }
+    .tab-btn.active { color: var(--primary); border-bottom-color: var(--primary); }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
+    /* ── Cards ────────────────────────────────────────── */
+    .card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 24px; margin-bottom: 20px;
+      box-shadow: var(--shadow);
+    }
+    .card h2 { font-size: 1.1rem; margin-bottom: 16px; font-weight: 600; }
+    .card h3 { font-size: .95rem; margin-bottom: 10px; font-weight: 600; color: var(--text-dim); }
+
+    /* ── Form Controls ────────────────────────────────── */
+    label { display: block; font-size: .82rem; color: var(--text-dim); margin-bottom: 5px; font-weight: 500; }
+    input[type="text"], input[type="number"], textarea, select {
+      width: 100%; padding: 10px 14px; font-size: .9rem;
+      background: var(--surface2); color: var(--text);
+      border: 1px solid var(--border); border-radius: 8px;
+      outline: none; transition: border .2s;
+    }
+    input:focus, textarea:focus, select:focus { border-color: var(--primary); }
+    textarea { resize: vertical; min-height: 80px; font-family: inherit; }
+
+    .form-row { display: flex; gap: 14px; margin-bottom: 14px; }
+    .form-row > * { flex: 1; }
+    .form-group { margin-bottom: 14px; }
+
+    /* ── Buttons ──────────────────────────────────────── */
+    .btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 10px 22px; font-size: .88rem; font-weight: 600;
+      border: none; border-radius: 8px; cursor: pointer;
+      transition: .2s; color: #fff;
+    }
+    .btn-primary { background: var(--primary); }
+    .btn-primary:hover { background: var(--primary-hover); }
+    .btn-danger { background: var(--danger); }
+    .btn-danger:hover { background: #c0392b; }
+    .btn-sm { padding: 6px 14px; font-size: .8rem; }
+    .btn:disabled { opacity: .5; cursor: not-allowed; }
+
+    /* ── Dropzone ─────────────────────────────────────── */
+    .dropzone {
+      border: 2px dashed var(--border); border-radius: var(--radius);
+      padding: 40px 20px; text-align: center; cursor: pointer;
+      transition: .25s; margin-bottom: 16px; position: relative;
+    }
+    .dropzone:hover, .dropzone.dragover {
+      border-color: var(--primary); background: rgba(108,92,231,.07);
+    }
+    .dropzone input[type="file"] {
+      position: absolute; inset: 0; opacity: 0; cursor: pointer;
+    }
+    .dropzone .icon { font-size: 2.2rem; margin-bottom: 8px; }
+    .dropzone p { color: var(--text-dim); font-size: .88rem; }
+    .dropzone .filename { color: var(--accent); font-weight: 600; margin-top: 6px; }
+
+    /* ── Doc List ─────────────────────────────────────── */
+    .doc-table { width: 100%; border-collapse: collapse; }
+    .doc-table th {
+      text-align: left; font-size: .78rem; color: var(--text-dim);
+      padding: 8px 12px; border-bottom: 1px solid var(--border);
+      text-transform: uppercase; letter-spacing: .5px;
+    }
+    .doc-table td {
+      padding: 10px 12px; font-size: .88rem;
+      border-bottom: 1px solid var(--border);
+    }
+    .doc-table tr:last-child td { border-bottom: none; }
+    .doc-id { font-family: 'Consolas', monospace; font-size: .78rem; color: var(--text-dim); }
+
+    /* ── Result Display ──────────────────────────────── */
+    .result-box {
+      background: var(--surface2); border: 1px solid var(--border);
+      border-radius: 8px; padding: 20px; margin-top: 16px;
+      white-space: pre-wrap; font-size: .9rem; line-height: 1.7;
+    }
+    .result-box.error { border-color: var(--danger); color: var(--danger); }
+
+    .answer-text { margin-bottom: 16px; }
+    .confidence-bar {
+      display: flex; align-items: center; gap: 10px; margin-bottom: 12px;
+    }
+    .confidence-bar .bar {
+      flex: 1; height: 8px; background: var(--surface); border-radius: 4px; overflow: hidden;
+    }
+    .confidence-bar .bar-fill {
+      height: 100%; border-radius: 4px; transition: width .5s;
+    }
+    .confidence-label { font-size: .82rem; font-weight: 600; min-width: 55px; }
+
+    .source-chip {
+      display: inline-flex; align-items: center; gap: 5px;
+      background: var(--surface); border: 1px solid var(--border);
+      padding: 4px 12px; border-radius: 6px; font-size: .78rem;
+      margin: 3px 4px 3px 0; color: var(--text-dim);
+    }
+    .source-chip .score { color: var(--accent); font-weight: 600; }
+
+    /* ── Loader ───────────────────────────────────────── */
+    .spinner {
+      display: inline-block; width: 18px; height: 18px;
+      border: 2px solid var(--border); border-top-color: var(--primary);
+      border-radius: 50%; animation: spin .6s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .loading-overlay {
+      display: none; align-items: center; justify-content: center;
+      gap: 10px; padding: 20px; color: var(--text-dim);
+    }
+    .loading-overlay.show { display: flex; }
+
+    /* ── Toggles ──────────────────────────────────────── */
+    .toggle-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+    .toggle {
+      position: relative; width: 40px; height: 22px;
+      background: var(--surface2); border: 1px solid var(--border);
+      border-radius: 12px; cursor: pointer; transition: .2s;
+    }
+    .toggle::after {
+      content: ''; position: absolute; top: 2px; left: 2px;
+      width: 16px; height: 16px; border-radius: 50%;
+      background: var(--text-dim); transition: .2s;
+    }
+    .toggle.on { background: var(--primary); border-color: var(--primary); }
+    .toggle.on::after { left: 20px; background: #fff; }
+
+    /* ── Verification Panel ──────────────────────────── */
+    .verification-panel {
+      margin-top: 14px; padding: 14px; border-radius: 8px;
+      border: 1px solid var(--border); background: var(--surface);
+    }
+    .verification-panel h4 { font-size: .88rem; margin-bottom: 8px; }
+    .claim-row {
+      display: flex; align-items: flex-start; gap: 8px;
+      padding: 6px 0; font-size: .82rem; border-bottom: 1px solid var(--border);
+    }
+    .claim-row:last-child { border-bottom: none; }
+    .claim-status {
+      padding: 2px 8px; border-radius: 4px; font-size: .72rem;
+      font-weight: 700; text-transform: uppercase; white-space: nowrap;
+    }
+    .claim-status.supported { background: rgba(0,184,148,.15); color: var(--success); }
+    .claim-status.unsupported { background: rgba(225,112,85,.15); color: var(--danger); }
+    .claim-status.partially_supported { background: rgba(253,203,110,.15); color: var(--warning); }
+
+    /* ── Comparison JSON ─────────────────────────────── */
+    .json-tree { font-family: 'Consolas', monospace; font-size: .82rem; }
+    .comparison-section { margin-bottom: 14px; }
+    .comparison-section h4 {
+      font-size: .88rem; margin-bottom: 6px;
+      padding-bottom: 4px; border-bottom: 1px solid var(--border);
+    }
+    .comp-point {
+      padding: 8px 12px; margin-bottom: 6px; border-radius: 6px;
+      background: var(--surface); font-size: .85rem;
+    }
+    .comp-point .quote {
+      font-style: italic; color: var(--text-dim); font-size: .8rem;
+      margin-top: 4px;
+    }
+
+    /* ── Stats Bar ────────────────────────────────────── */
+    .stats-row {
+      display: flex; gap: 16px; margin-bottom: 18px; flex-wrap: wrap;
+    }
+    .stat-card {
+      flex: 1; min-width: 140px; background: var(--surface);
+      border: 1px solid var(--border); border-radius: var(--radius);
+      padding: 16px; text-align: center;
+    }
+    .stat-card .value { font-size: 1.6rem; font-weight: 700; color: var(--primary); }
+    .stat-card .label { font-size: .78rem; color: var(--text-dim); margin-top: 4px; }
+
+    /* ── Toast ─────────────────────────────────────────── */
+    .toast-container {
+      position: fixed; top: 20px; right: 20px; z-index: 9999;
+      display: flex; flex-direction: column; gap: 8px;
+    }
+    .toast {
+      padding: 12px 20px; border-radius: 8px; font-size: .88rem;
+      color: #fff; animation: slideIn .3s; box-shadow: var(--shadow);
+    }
+    .toast.success { background: var(--success); }
+    .toast.error { background: var(--danger); }
+    .toast.info { background: var(--primary); }
+    @keyframes slideIn { from { opacity: 0; transform: translateX(40px); } to { opacity: 1; } }
+
+    /* ── Responsive ───────────────────────────────────── */
+    @media (max-width: 700px) {
+      .form-row { flex-direction: column; }
+      .app-header { padding: 12px 16px; }
+      .container { padding: 16px 12px 40px; }
+      .tabs { overflow-x: auto; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ════════════════════════════════════════════════════════ -->
+<!--  HEADER                                                 -->
+<!-- ════════════════════════════════════════════════════════ -->
+<header class="app-header">
+  <h1><span>AI</span> RAG System</h1>
+  <div class="health-badge" id="healthBadge" onclick="checkHealth()">⏳ Checking...</div>
+</header>
+
+<!-- Toast container -->
+<div class="toast-container" id="toasts"></div>
+
+<div class="container">
+
+  <!-- ── Stats ───────────────────────────────────────── -->
+  <div class="stats-row" id="statsRow">
+    <div class="stat-card"><div class="value" id="statDocs">-</div><div class="label">Documents</div></div>
+    <div class="stat-card"><div class="value" id="statChunks">-</div><div class="label">Chunks</div></div>
+    <div class="stat-card"><div class="value" id="statCache">-</div><div class="label">Cached Queries</div></div>
+  </div>
+
+  <!-- ── Tabs ────────────────────────────────────────── -->
+  <div class="tabs" role="tablist">
+    <button class="tab-btn active" data-tab="upload" role="tab">📄 Upload</button>
+    <button class="tab-btn" data-tab="documents" role="tab">📁 Documents</button>
+    <button class="tab-btn" data-tab="query" role="tab">💬 Query</button>
+    <button class="tab-btn" data-tab="compare" role="tab">⚖️ Compare</button>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════ -->
+  <!--  TAB: UPLOAD                                        -->
+  <!-- ═══════════════════════════════════════════════════ -->
+  <div class="tab-panel active" id="panel-upload">
+    <div class="card">
+      <h2>Upload Document</h2>
+      <div class="dropzone" id="dropzone">
+        <input type="file" id="fileInput" accept=".pdf,.docx,.txt,.md,.markdown" />
+        <div class="icon">📂</div>
+        <p>Drag &amp; drop a file here, or click to browse</p>
+        <p style="font-size:.78rem; margin-top:4px;">PDF, DOCX, TXT, Markdown — up to 50 MB</p>
+        <div class="filename" id="selectedFile"></div>
+      </div>
+      <div class="form-row">
+        <div>
+          <label for="chunkSize">Chunk Size (100–10 000)</label>
+          <input type="number" id="chunkSize" placeholder="500 (default)" min="100" max="10000" />
+        </div>
+        <div>
+          <label for="chunkOverlap">Chunk Overlap (0–500)</label>
+          <input type="number" id="chunkOverlap" placeholder="100 (default)" min="0" max="500" />
+        </div>
+      </div>
+      <button class="btn btn-primary" id="uploadBtn" onclick="uploadFile()">⬆️ Upload &amp; Ingest</button>
+      <div class="loading-overlay" id="uploadLoader"><div class="spinner"></div> Parsing, chunking &amp; embedding…</div>
+      <div id="uploadResult"></div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════ -->
+  <!--  TAB: DOCUMENTS                                     -->
+  <!-- ═══════════════════════════════════════════════════ -->
+  <div class="tab-panel" id="panel-documents">
+    <div class="card">
+      <h2>Uploaded Documents</h2>
+      <button class="btn btn-primary btn-sm" onclick="loadDocuments()" style="margin-bottom:14px;">🔄 Refresh</button>
+      <div id="docListContainer"><p style="color:var(--text-dim)">Loading…</p></div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════ -->
+  <!--  TAB: QUERY                                         -->
+  <!-- ═══════════════════════════════════════════════════ -->
+  <div class="tab-panel" id="panel-query">
+    <div class="card">
+      <h2>Ask a Question</h2>
+      <div class="form-group">
+        <label for="queryText">Your Question</label>
+        <textarea id="queryText" rows="3" placeholder="e.g. What are the key findings of the report?"></textarea>
+      </div>
+      <div class="form-row">
+        <div>
+          <label for="queryTopK">Top K Results</label>
+          <input type="number" id="queryTopK" value="5" min="1" max="20" />
+        </div>
+        <div>
+          <label for="queryDocId">Specific Document (optional)</label>
+          <select id="queryDocId"><option value="">All documents</option></select>
+        </div>
+        <div>
+          <label for="queryTemp">Temperature</label>
+          <input type="number" id="queryTemp" placeholder="0.1 (default)" min="0" max="1" step="0.1" />
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="toggle-row">
+          <div class="toggle" id="toggleRerank" onclick="this.classList.toggle('on')"></div>
+          <span style="font-size:.85rem;">Re-rank (BM25 hybrid)</span>
+        </div>
+        <div class="toggle-row">
+          <div class="toggle" id="toggleVerify" onclick="this.classList.toggle('on')"></div>
+          <span style="font-size:.85rem;">Verify answer</span>
+        </div>
+      </div>
+      <button class="btn btn-primary" id="queryBtn" onclick="submitQuery()">🔍 Query</button>
+      <div class="loading-overlay" id="queryLoader"><div class="spinner"></div> Searching &amp; generating answer…</div>
+      <div id="queryResult"></div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════ -->
+  <!--  TAB: COMPARE                                       -->
+  <!-- ═══════════════════════════════════════════════════ -->
+  <div class="tab-panel" id="panel-compare">
+    <div class="card">
+      <h2>Compare Two Documents</h2>
+      <div class="form-row">
+        <div>
+          <label for="compareDoc1">Document 1</label>
+          <select id="compareDoc1"><option value="">Select document…</option></select>
+        </div>
+        <div>
+          <label for="compareDoc2">Document 2</label>
+          <select id="compareDoc2"><option value="">Select document…</option></select>
+        </div>
+      </div>
+      <div class="form-group">
+        <label for="compareTopic">Comparison Topic</label>
+        <input type="text" id="compareTopic" placeholder="e.g. methodology, results, conclusions" />
+      </div>
+      <div class="form-row">
+        <div>
+          <label for="compareTopK">Top K per Document</label>
+          <input type="number" id="compareTopK" value="5" min="1" max="20" />
+        </div>
+        <div class="toggle-row" style="margin-top:20px;">
+          <div class="toggle on" id="toggleStructured" onclick="this.classList.toggle('on')"></div>
+          <span style="font-size:.85rem;">Structured JSON output</span>
+        </div>
+      </div>
+      <button class="btn btn-primary" id="compareBtn" onclick="submitCompare()">⚖️ Compare</button>
+      <div class="loading-overlay" id="compareLoader"><div class="spinner"></div> Comparing documents…</div>
+      <div id="compareResult"></div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════
+//  Configuration
+// ═══════════════════════════════════════════════════════════
+const API = window.location.origin;
+
+// ═══════════════════════════════════════════════════════════
+//  Tabs
+// ═══════════════════════════════════════════════════════════
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('panel-' + btn.dataset.tab).classList.add('active');
+    if (btn.dataset.tab === 'documents') loadDocuments();
+    if (btn.dataset.tab === 'query' || btn.dataset.tab === 'compare') populateDocSelects();
+  });
+});
+
+// ═══════════════════════════════════════════════════════════
+//  Toast Notifications
+// ═══════════════════════════════════════════════════════════
+function toast(msg, type = 'info') {
+  const el = document.createElement('div');
+  el.className = 'toast ' + type;
+  el.textContent = msg;
+  document.getElementById('toasts').appendChild(el);
+  setTimeout(() => el.remove(), 4000);
+}
+
+// ═══════════════════════════════════════════════════════════
+//  Health Check
+// ═══════════════════════════════════════════════════════════
+async function checkHealth() {
+  const badge = document.getElementById('healthBadge');
+  try {
+    const res = await fetch(API + '/health');
+    const data = await res.json();
+    badge.textContent = '✅ Healthy — ' + data.vector_store.total_documents + ' docs, ' + data.vector_store.total_chunks + ' chunks';
+    badge.className = 'health-badge ok';
+    document.getElementById('statDocs').textContent = data.vector_store.total_documents;
+    document.getElementById('statChunks').textContent = data.vector_store.total_chunks;
+    document.getElementById('statCache').textContent = data.cache.queries;
+  } catch (e) {
+    badge.textContent = '❌ Server unreachable';
+    badge.className = 'health-badge err';
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  File Upload
+// ═══════════════════════════════════════════════════════════
+const dropzone = document.getElementById('dropzone');
+const fileInput = document.getElementById('fileInput');
+
+dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('dragover'); });
+dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
+dropzone.addEventListener('drop', e => {
+  e.preventDefault(); dropzone.classList.remove('dragover');
+  if (e.dataTransfer.files.length) { fileInput.files = e.dataTransfer.files; showFileName(); }
+});
+fileInput.addEventListener('change', showFileName);
+
+function showFileName() {
+  const f = fileInput.files[0];
+  document.getElementById('selectedFile').textContent = f ? '📎 ' + f.name + ' (' + (f.size / 1024).toFixed(1) + ' KB)' : '';
+}
+
+async function uploadFile() {
+  const f = fileInput.files[0];
+  if (!f) { toast('Please select a file first', 'error'); return; }
+
+  const form = new FormData();
+  form.append('file', f);
+  const cs = document.getElementById('chunkSize').value;
+  const co = document.getElementById('chunkOverlap').value;
+  if (cs) form.append('chunk_size', cs);
+  if (co) form.append('chunk_overlap', co);
+
+  const btn = document.getElementById('uploadBtn');
+  const loader = document.getElementById('uploadLoader');
+  btn.disabled = true; loader.classList.add('show');
+  document.getElementById('uploadResult').innerHTML = '';
+
+  try {
+    const res = await fetch(API + '/api/documents/upload', { method: 'POST', body: form });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || data.error?.message || 'Upload failed');
+
+    const d = data.data;
+    document.getElementById('uploadResult').innerHTML =
+      '<div class="result-box">' +
+      '<strong>✅ Upload Successful</strong>\n\n' +
+      'Document ID: <code>' + d.document_id + '</code>\n' +
+      'Filename: ' + d.filename + '\n' +
+      'Chunks: ' + d.chunk_count + '\n' +
+      'Characters: ' + d.character_count.toLocaleString() + '\n' +
+      'Chunk Size: ' + d.chunk_config.chunk_size + ' / Overlap: ' + d.chunk_config.chunk_overlap + '\n' +
+      'Processing Time: ' + d.processing_time +
+      '</div>';
+    toast('Document uploaded successfully!', 'success');
+    checkHealth();
+    fileInput.value = '';
+    document.getElementById('selectedFile').textContent = '';
+  } catch (e) {
+    document.getElementById('uploadResult').innerHTML = '<div class="result-box error">❌ ' + escapeHtml(e.message) + '</div>';
+    toast(e.message, 'error');
+  } finally {
+    btn.disabled = false; loader.classList.remove('show');
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  Document List
+// ═══════════════════════════════════════════════════════════
+let cachedDocs = [];
+
+async function loadDocuments() {
+  const container = document.getElementById('docListContainer');
+  try {
+    const res = await fetch(API + '/api/documents');
+    const data = await res.json();
+    cachedDocs = data.data || [];
+
+    if (!cachedDocs.length) {
+      container.innerHTML = '<p style="color:var(--text-dim)">No documents uploaded yet.</p>';
+      return;
+    }
+
+    let html = '<table class="doc-table"><thead><tr><th>Filename</th><th>Chunks</th><th>Uploaded</th><th>ID</th><th></th></tr></thead><tbody>';
+    for (const doc of cachedDocs) {
+      const time = doc.uploaded_at ? new Date(doc.uploaded_at).toLocaleString() : '—';
+      html += '<tr>' +
+        '<td><strong>' + escapeHtml(doc.filename) + '</strong></td>' +
+        '<td>' + doc.chunk_count + '</td>' +
+        '<td>' + time + '</td>' +
+        '<td class="doc-id">' + doc.document_id.slice(0, 8) + '…</td>' +
+        '<td><button class="btn btn-danger btn-sm" onclick="deleteDoc(\'' + doc.document_id + '\')">🗑️</button></td>' +
+        '</tr>';
+    }
+    html += '</tbody></table>';
+    container.innerHTML = html;
+  } catch (e) {
+    container.innerHTML = '<p style="color:var(--danger)">Failed to load documents.</p>';
+  }
+}
+
+async function deleteDoc(id) {
+  if (!confirm('Delete this document and all its chunks?')) return;
+  try {
+    const res = await fetch(API + '/api/documents/' + id, { method: 'DELETE' });
+    if (!res.ok) throw new Error('Delete failed');
+    toast('Document deleted', 'success');
+    loadDocuments();
+    checkHealth();
+  } catch (e) {
+    toast(e.message, 'error');
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  Populate Doc Selects (for Query & Compare)
+// ═══════════════════════════════════════════════════════════
+async function populateDocSelects() {
+  try {
+    const res = await fetch(API + '/api/documents');
+    const data = await res.json();
+    cachedDocs = data.data || [];
+  } catch { /* use cached */ }
+
+  const selects = ['queryDocId', 'compareDoc1', 'compareDoc2'];
+  for (const sid of selects) {
+    const sel = document.getElementById(sid);
+    const current = sel.value;
+    const isQuery = sid === 'queryDocId';
+    sel.innerHTML = isQuery ? '<option value="">All documents</option>' : '<option value="">Select document…</option>';
+    for (const doc of cachedDocs) {
+      const opt = document.createElement('option');
+      opt.value = doc.document_id;
+      opt.textContent = doc.filename + ' (' + doc.chunk_count + ' chunks)';
+      sel.appendChild(opt);
+    }
+    if (current) sel.value = current;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  Query
+// ═══════════════════════════════════════════════════════════
+async function submitQuery() {
+  const query = document.getElementById('queryText').value.trim();
+  if (!query) { toast('Please enter a question', 'error'); return; }
+
+  const body = {
+    query,
+    top_k: parseInt(document.getElementById('queryTopK').value) || 5,
+    rerank: document.getElementById('toggleRerank').classList.contains('on'),
+    verify: document.getElementById('toggleVerify').classList.contains('on'),
+    include_metadata: true,
+  };
+  const docId = document.getElementById('queryDocId').value;
+  if (docId) body.document_id = docId;
+  const temp = document.getElementById('queryTemp').value;
+  if (temp) body.temperature = parseFloat(temp);
+
+  const btn = document.getElementById('queryBtn');
+  const loader = document.getElementById('queryLoader');
+  btn.disabled = true; loader.classList.add('show');
+  document.getElementById('queryResult').innerHTML = '';
+
+  try {
+    const res = await fetch(API + '/api/query', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || data.error?.message || 'Query failed');
+    renderQueryResult(data.data);
+  } catch (e) {
+    document.getElementById('queryResult').innerHTML = '<div class="result-box error">❌ ' + escapeHtml(e.message) + '</div>';
+    toast(e.message, 'error');
+  } finally {
+    btn.disabled = false; loader.classList.remove('show');
+  }
+}
+
+function renderQueryResult(d) {
+  const conf = d.confidence || {};
+  const score = conf.score ?? 0;
+  const barColor = score >= 7 ? 'var(--success)' : score >= 5 ? 'var(--warning)' : 'var(--danger)';
+
+  let html = '<div class="result-box">';
+
+  // Answer
+  html += '<div class="answer-text">' + escapeHtml(d.answer) + '</div>';
+
+  // Confidence
+  html += '<div class="confidence-bar">' +
+    '<span class="confidence-label" style="color:' + barColor + '">' + (score || '?') + '/10</span>' +
+    '<div class="bar"><div class="bar-fill" style="width:' + (score * 10) + '%;background:' + barColor + '"></div></div>' +
+    '<span style="font-size:.78rem;color:var(--text-dim)">' + escapeHtml(conf.reason || '') + '</span></div>';
+
+  // Meta
+  html += '<div style="font-size:.78rem;color:var(--text-dim);margin-bottom:10px;">' +
+    '⏱ ' + d.processing_time + ' · ' + d.chunks_used + ' chunks · ' +
+    (d.reranked ? '✅ Re-ranked' : 'No re-rank') + '</div>';
+
+  // Sources
+  if (d.sources && d.sources.length) {
+    html += '<h3>Sources</h3>';
+    for (const s of d.sources) {
+      html += '<div class="source-chip">' +
+        escapeHtml(s.filename) + ' · Chunk ' + s.chunk_index +
+        ' <span class="score">' + (s.similarity_score * 100).toFixed(1) + '%</span>';
+      if (s.rerank_score != null) html += ' · ↕ ' + (s.rerank_score * 100).toFixed(1) + '%';
+      html += '</div>';
+    }
+    // Source previews
+    html += '<details style="margin-top:10px;"><summary style="cursor:pointer;font-size:.82rem;color:var(--text-dim);">Show chunk previews</summary>';
+    for (const s of d.sources) {
+      if (s.preview) {
+        html += '<div style="padding:8px;margin-top:6px;background:var(--surface);border-radius:6px;font-size:.82rem;">' +
+          '<strong>' + escapeHtml(s.filename) + ' · Chunk ' + s.chunk_index + '</strong><br>' +
+          escapeHtml(s.preview) + '</div>';
+      }
+    }
+    html += '</details>';
+  }
+
+  // Verification
+  if (d.verification) {
+    const v = d.verification;
+    const vColor = v.isVerified ? 'var(--success)' : 'var(--danger)';
+    html += '<div class="verification-panel">' +
+      '<h4 style="color:' + vColor + '">' + (v.isVerified ? '✅' : '⚠️') + ' Verification: ' +
+      (v.isVerified ? 'PASSED' : 'ISSUES FOUND') + ' (' + (v.overallScore || 0) + '/10)</h4>' +
+      '<p style="font-size:.82rem;color:var(--text-dim);margin-bottom:8px;">' + escapeHtml(v.summary || '') + '</p>';
+    if (v.claims && v.claims.length) {
+      for (const c of v.claims) {
+        const st = c.status || 'unknown';
+        html += '<div class="claim-row"><span class="claim-status ' + st + '">' + st + '</span>' +
+          '<span>' + escapeHtml(c.claim || '') + '</span></div>';
+      }
+    }
+    if (v.unsupportedClaims && v.unsupportedClaims.length) {
+      html += '<div style="margin-top:8px;color:var(--danger);font-size:.82rem;"><strong>Unsupported:</strong></div>';
+      for (const u of v.unsupportedClaims) {
+        html += '<div class="claim-row"><span class="claim-status unsupported">unsupported</span>' +
+          '<span>' + escapeHtml(typeof u === 'string' ? u : u.claim || JSON.stringify(u)) + '</span></div>';
+      }
+    }
+    html += '</div>';
+  }
+
+  html += '</div>';
+  document.getElementById('queryResult').innerHTML = html;
+}
+
+// ═══════════════════════════════════════════════════════════
+//  Compare
+// ═══════════════════════════════════════════════════════════
+async function submitCompare() {
+  const d1 = document.getElementById('compareDoc1').value;
+  const d2 = document.getElementById('compareDoc2').value;
+  const topic = document.getElementById('compareTopic').value.trim();
+
+  if (!d1 || !d2) { toast('Select two documents to compare', 'error'); return; }
+  if (d1 === d2) { toast('Please select two different documents', 'error'); return; }
+  if (!topic) { toast('Enter a comparison topic', 'error'); return; }
+
+  const body = {
+    document_ids: [d1, d2],
+    topic,
+    top_k: parseInt(document.getElementById('compareTopK').value) || 5,
+    structured: document.getElementById('toggleStructured').classList.contains('on'),
+  };
+
+  const btn = document.getElementById('compareBtn');
+  const loader = document.getElementById('compareLoader');
+  btn.disabled = true; loader.classList.add('show');
+  document.getElementById('compareResult').innerHTML = '';
+
+  try {
+    const res = await fetch(API + '/api/compare', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || data.error?.message || 'Comparison failed');
+    renderCompareResult(data.data);
+  } catch (e) {
+    document.getElementById('compareResult').innerHTML = '<div class="result-box error">❌ ' + escapeHtml(e.message) + '</div>';
+    toast(e.message, 'error');
+  } finally {
+    btn.disabled = false; loader.classList.remove('show');
+  }
+}
+
+function renderCompareResult(d) {
+  let html = '<div class="result-box">';
+  html += '<div style="font-size:.78rem;color:var(--text-dim);margin-bottom:12px;">' +
+    '⏱ ' + d.processing_time + ' · Topic: <strong>' + escapeHtml(d.topic) + '</strong></div>';
+
+  const comp = d.comparison;
+
+  if (d.structured && typeof comp === 'object') {
+    // Summary
+    if (comp.summary) {
+      html += '<div class="comparison-section"><h4>📋 Summary</h4><div class="comp-point">' +
+        '<strong>Assessment:</strong> ' + escapeHtml(comp.summary.overallAssessment || '') + '<br>' +
+        '<strong>Agreement Level:</strong> ' + escapeHtml(comp.summary.agreementLevel || '') + '<br>' +
+        '<strong>Key Takeaway:</strong> ' + escapeHtml(comp.summary.keyTakeaway || '') +
+        '</div></div>';
+    }
+
+    // Similarities
+    if (comp.similarities && comp.similarities.length) {
+      html += '<div class="comparison-section"><h4>🤝 Similarities (' + comp.similarities.length + ')</h4>';
+      for (const s of comp.similarities) {
+        html += '<div class="comp-point">✅ ' + escapeHtml(s.point || '') +
+          (s.doc1Evidence?.quote ? '<div class="quote">Doc 1: "' + escapeHtml(s.doc1Evidence.quote) + '"</div>' : '') +
+          (s.doc2Evidence?.quote ? '<div class="quote">Doc 2: "' + escapeHtml(s.doc2Evidence.quote) + '"</div>' : '') +
+          '</div>';
+      }
+      html += '</div>';
+    }
+
+    // Differences
+    if (comp.differences && comp.differences.length) {
+      html += '<div class="comparison-section"><h4>⚡ Differences (' + comp.differences.length + ')</h4>';
+      for (const d2 of comp.differences) {
+        html += '<div class="comp-point"><strong>' + escapeHtml(d2.aspect || '') + '</strong><br>' +
+          '📄 Doc 1: ' + escapeHtml(d2.doc1Position || '') + '<br>' +
+          '📄 Doc 2: ' + escapeHtml(d2.doc2Position || '') +
+          '</div>';
+      }
+      html += '</div>';
+    }
+
+    // Unique points
+    if (comp.uniqueToDoc1 && comp.uniqueToDoc1.length) {
+      html += '<div class="comparison-section"><h4>📄 Unique to Document 1 (' + comp.uniqueToDoc1.length + ')</h4>';
+      for (const u of comp.uniqueToDoc1) {
+        html += '<div class="comp-point">• ' + escapeHtml(u.point || '') +
+          (u.quote ? '<div class="quote">"' + escapeHtml(u.quote) + '"</div>' : '') + '</div>';
+      }
+      html += '</div>';
+    }
+    if (comp.uniqueToDoc2 && comp.uniqueToDoc2.length) {
+      html += '<div class="comparison-section"><h4>📄 Unique to Document 2 (' + comp.uniqueToDoc2.length + ')</h4>';
+      for (const u of comp.uniqueToDoc2) {
+        html += '<div class="comp-point">• ' + escapeHtml(u.point || '') +
+          (u.quote ? '<div class="quote">"' + escapeHtml(u.quote) + '"</div>' : '') + '</div>';
+      }
+      html += '</div>';
+    }
+
+    // Raw JSON toggle
+    html += '<details style="margin-top:12px;"><summary style="cursor:pointer;font-size:.82rem;color:var(--text-dim);">View raw JSON</summary>' +
+      '<pre class="json-tree" style="margin-top:6px;overflow-x:auto;">' + escapeHtml(JSON.stringify(comp, null, 2)) + '</pre></details>';
+  } else {
+    // Plain text comparison
+    html += '<div class="answer-text">' + escapeHtml(typeof comp === 'string' ? comp : JSON.stringify(comp, null, 2)) + '</div>';
+  }
+
+  // Source chips
+  const allSrc = [...(d.doc1_sources || []).map(s => ({...s, doc: 1})), ...(d.doc2_sources || []).map(s => ({...s, doc: 2}))];
+  if (allSrc.length) {
+    html += '<h3 style="margin-top:14px;">Sources Used</h3>';
+    for (const s of allSrc) {
+      html += '<div class="source-chip">Doc ' + s.doc + ' · ' + escapeHtml(s.filename) +
+        ' · Chunk ' + s.chunk_index + ' <span class="score">' + (s.similarity_score * 100).toFixed(1) + '%</span></div>';
+    }
+  }
+
+  html += '</div>';
+  document.getElementById('compareResult').innerHTML = html;
+}
+
+// ═══════════════════════════════════════════════════════════
+//  Utility
+// ═══════════════════════════════════════════════════════════
+function escapeHtml(s) {
+  if (!s) return '';
+  const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' };
+  return String(s).replace(/[&<>"']/g, c => map[c]);
+}
+
+// ═══════════════════════════════════════════════════════════
+//  Init
+// ═══════════════════════════════════════════════════════════
+checkHealth();
+</script>
+
+</body>
+</html>

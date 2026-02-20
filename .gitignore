@@ -1,0 +1,62 @@
+# ─── Python ───────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg
+*.egg-info/
+dist/
+build/
+*.whl
+*.so
+*.dll
+
+# ─── Virtual Environments ─────────────────────────────────
+venv/
+.venv/
+env/
+ENV/
+
+# ─── Environment Variables ────────────────────────────────
+.env
+.env.*
+
+# ─── ChromaDB (runtime data, regenerated on startup) ─────
+chroma_data/
+
+# ─── Model Caches (HuggingFace / ONNX) ───────────────────
+hf_cache/
+onnx_models/
+.cache/
+
+# ─── IDE / Editors ────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.classpath
+
+# ─── OS Files ─────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+Desktop.ini
+ehthumbs.db
+
+# ─── Logs & Temp ──────────────────────────────────────────
+*.log
+*.tmp
+*.bak
+
+# ─── Testing / Coverage ──────────────────────────────────
+.pytest_cache/
+htmlcov/
+.coverage
+coverage.xml
+
+# ─── Distribution / Packaging ────────────────────────────
+*.manifest
+*.spec
+pip-log.txt
+pip-delete-this-directory.txt
