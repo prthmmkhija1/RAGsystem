@@ -2,7 +2,7 @@
 RAG Orchestration Service
 Ties together: parse → chunk → embed → store → search → rerank → LLM answer.
 """
-import asyncio
+import json
 import time
 import uuid
 from typing import Any, Dict, List, Optional
@@ -12,6 +12,7 @@ from app.services.llm import llm_service
 from app.services.rag import rerank_service
 from app.vectorstore import vector_store_service
 from app.utils import cache_service
+from app.utils.error_handler import NotFoundError
 from app.utils.document_parser import parse_document
 from app.utils.chunking_service import (
     chunk_text,
@@ -97,12 +98,21 @@ async def query_documents(
     """
     Full query pipeline: embed query → search → rerank → LLM answer.
     """
-    skip_cache = skip_cache or verify
     start = time.time()
+    # Every knob that can change the response must be part of the cache key,
+    # otherwise a request can be served a result produced under different
+    # settings (e.g. a verify=True request hitting an unverified entry).
+    cache_opts = {
+        "top_k": top_k,
+        "document_id": document_id,
+        "rerank": rerank,
+        "verify": verify,
+        "temperature": temperature,
+        "include_metadata": include_metadata,
+    }
 
     # Check cache
     if not skip_cache:
-        cache_opts = {"top_k": top_k, "document_id": document_id, "rerank": rerank}
         cached = cache_service.get_query_result(query, cache_opts)
         if cached:
             print(f'[RAG] Query served from cache: "{query[:50]}..."')
@@ -186,7 +196,6 @@ async def query_documents(
 
     # Cache result
     if not skip_cache:
-        cache_opts = {"top_k": top_k, "document_id": document_id, "rerank": rerank}
         cache_service.set_query_result(query, cache_opts, response)
 
     return response
@@ -201,6 +210,8 @@ async def compare_documents(
     topic: str,
     top_k: int = 5,
     structured: bool = False,
+    verify: bool = False,
+    rerank: bool = False,
 ) -> Dict[str, Any]:
     """
     Compare two documents on a given topic.
@@ -208,12 +219,47 @@ async def compare_documents(
     start = time.time()
     print(f'[RAG] Comparing docs [{", ".join(document_ids)}] on: "{topic[:60]}" (structured={structured})')
 
-    # 1. Embed topic
+    # 1. Reject unknown documents up front. Without this a deleted or mistyped
+    #    ID yields zero chunks for that side and the LLM "compares" a real
+    #    document against nothing, inventing the missing half.
+    missing = [d for d in document_ids if not vector_store_service.document_exists(d)]
+    if missing:
+        raise NotFoundError(f"Document(s) {', '.join(missing)}")
+
+    cache_opts = {
+        "document_ids": document_ids,
+        "top_k": top_k,
+        "structured": structured,
+        "verify": verify,
+        "rerank": rerank,
+    }
+    cached = cache_service.get_compare_result(topic, cache_opts)
+    if cached:
+        print(f'[RAG] Comparison served from cache: "{topic[:50]}"')
+        cached = {**cached, "processing_time": "0.00s (cached)"}
+        return cached
+
+    # 2. Embed topic
     topic_embedding = await embedding_service.generate_embedding(topic)
 
-    # 2. Search each document
-    doc1_results = vector_store_service.search_by_document(topic_embedding, document_ids[0], top_k)
-    doc2_results = vector_store_service.search_by_document(topic_embedding, document_ids[1], top_k)
+    # 3. Search each document (fetch extra candidates when re-ranking, same
+    #    as the query pipeline, so BM25 has more than top_k chunks to work with)
+    fetch_k = min(top_k * 3, 20) if rerank else top_k
+    doc1_results = vector_store_service.search_by_document(topic_embedding, document_ids[0], fetch_k)
+    doc2_results = vector_store_service.search_by_document(topic_embedding, document_ids[1], fetch_k)
+
+    if rerank:
+        if len(doc1_results) > 1:
+            doc1_results = rerank_service.rerank_chunks(topic, doc1_results, top_n=top_k)
+        else:
+            doc1_results = doc1_results[:top_k]
+        if len(doc2_results) > 1:
+            doc2_results = rerank_service.rerank_chunks(topic, doc2_results, top_n=top_k)
+        else:
+            doc2_results = doc2_results[:top_k]
+    else:
+        doc1_results = doc1_results[:top_k]
+        doc2_results = doc2_results[:top_k]
 
     if not doc1_results and not doc2_results:
         empty = {
@@ -234,37 +280,56 @@ async def compare_documents(
             "processing_time": f"{time.time() - start:.2f}s",
         }
 
-    # 3. Generate comparison
+    # 4. Generate comparison
     if structured:
         comparison = await llm_service.generate_structured_comparison(topic, doc1_results, doc2_results)
     else:
         comparison = await llm_service.generate_comparison(topic, doc1_results, doc2_results)
 
-    # 4. Build citations
+    # 5. Verify (optional)
+    verification = None
+    if verify:
+        print("[RAG]   Running comparison verification...")
+        answer_text = json.dumps(comparison) if structured else comparison
+        verification = await llm_service.verify_answer(answer_text, doc1_results + doc2_results)
+        v_status = "PASSED" if verification.get("isVerified") else "FAILED"
+        print(f"[RAG]   Verification: {v_status} ({verification.get('overallScore', 0)}/10)")
+
+    # 6. Build citations
     def build_sources(results):
-        return [
-            {
+        sources = []
+        for r in results:
+            src = {
                 "filename": r.get("metadata", {}).get("filename"),
                 "chunk_index": r.get("metadata", {}).get("chunk_index"),
                 "document_id": r.get("metadata", {}).get("document_id"),
                 "similarity_score": round(r.get("similarity_score", 0), 4),
                 "preview": r.get("text", "")[:200],
             }
-            for r in results
-        ]
+            if r.get("rerank_score") is not None:
+                src["rerank_score"] = r["rerank_score"]
+                src["original_rank"] = r.get("original_rank")
+            sources.append(src)
+        return sources
 
     elapsed = f"{time.time() - start:.2f}s"
     print(f"[RAG]   Comparison generated in {elapsed}")
 
-    return {
+    result = {
         "comparison": comparison,
         "structured": structured,
         "doc1_sources": build_sources(doc1_results),
         "doc2_sources": build_sources(doc2_results),
         "topic": topic,
         "documents_compared": document_ids,
+        "reranked": rerank,
         "processing_time": elapsed,
     }
+    if verification is not None:
+        result["verification"] = verification
+
+    cache_service.set_compare_result(topic, cache_opts, result)
+    return result
 
 
 # ──────────────────────────────────────────────────────────

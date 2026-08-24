@@ -403,6 +403,14 @@
           <div class="toggle on" id="toggleStructured" onclick="this.classList.toggle('on')"></div>
           <span style="font-size:.85rem;">Structured JSON output</span>
         </div>
+        <div class="toggle-row" style="margin-top:10px;">
+          <div class="toggle" id="toggleCompareVerify" onclick="this.classList.toggle('on')"></div>
+          <span style="font-size:.85rem;">Verify answer</span>
+        </div>
+        <div class="toggle-row" style="margin-top:10px;">
+          <div class="toggle" id="toggleCompareRerank" onclick="this.classList.toggle('on')"></div>
+          <span style="font-size:.85rem;">Re-rank (BM25 hybrid)</span>
+        </div>
       </div>
       <button class="btn btn-primary" id="compareBtn" onclick="submitCompare()">⚖️ Compare</button>
       <div class="loading-overlay" id="compareLoader"><div class="spinner"></div> Comparing documents…</div>
@@ -632,6 +640,7 @@ async function submitQuery() {
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || data.error?.message || 'Query failed');
     renderQueryResult(data.data);
+    checkHealth();
   } catch (e) {
     document.getElementById('queryResult').innerHTML = '<div class="result-box error">❌ ' + escapeHtml(e.message) + '</div>';
     toast(e.message, 'error');
@@ -729,6 +738,8 @@ async function submitCompare() {
     topic,
     top_k: parseInt(document.getElementById('compareTopK').value) || 5,
     structured: document.getElementById('toggleStructured').classList.contains('on'),
+    verify: document.getElementById('toggleCompareVerify').classList.contains('on'),
+    rerank: document.getElementById('toggleCompareRerank').classList.contains('on'),
   };
 
   const btn = document.getElementById('compareBtn');
@@ -745,6 +756,7 @@ async function submitCompare() {
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || data.error?.message || 'Comparison failed');
     renderCompareResult(data.data);
+    checkHealth();
   } catch (e) {
     document.getElementById('compareResult').innerHTML = '<div class="result-box error">❌ ' + escapeHtml(e.message) + '</div>';
     toast(e.message, 'error');
@@ -826,8 +838,35 @@ function renderCompareResult(d) {
     html += '<h3 style="margin-top:14px;">Sources Used</h3>';
     for (const s of allSrc) {
       html += '<div class="source-chip">Doc ' + s.doc + ' · ' + escapeHtml(s.filename) +
-        ' · Chunk ' + s.chunk_index + ' <span class="score">' + (s.similarity_score * 100).toFixed(1) + '%</span></div>';
+        ' · Chunk ' + s.chunk_index + ' <span class="score">' + (s.similarity_score * 100).toFixed(1) + '%</span>';
+      if (s.rerank_score != null) html += ' · ↕ ' + (s.rerank_score * 100).toFixed(1) + '%';
+      html += '</div>';
     }
+  }
+
+  // Verification
+  if (d.verification) {
+    const v = d.verification;
+    const vColor = v.isVerified ? 'var(--success)' : 'var(--danger)';
+    html += '<div class="verification-panel">' +
+      '<h4 style="color:' + vColor + '">' + (v.isVerified ? '✅' : '⚠️') + ' Verification: ' +
+      (v.isVerified ? 'PASSED' : 'ISSUES FOUND') + ' (' + (v.overallScore || 0) + '/10)</h4>' +
+      '<p style="font-size:.82rem;color:var(--text-dim);margin-bottom:8px;">' + escapeHtml(v.summary || '') + '</p>';
+    if (v.claims && v.claims.length) {
+      for (const c of v.claims) {
+        const st = c.status || 'unknown';
+        html += '<div class="claim-row"><span class="claim-status ' + st + '">' + st + '</span>' +
+          '<span>' + escapeHtml(c.claim || '') + '</span></div>';
+      }
+    }
+    if (v.unsupportedClaims && v.unsupportedClaims.length) {
+      html += '<div style="margin-top:8px;color:var(--danger);font-size:.82rem;"><strong>Unsupported:</strong></div>';
+      for (const u of v.unsupportedClaims) {
+        html += '<div class="claim-row"><span class="claim-status unsupported">unsupported</span>' +
+          '<span>' + escapeHtml(typeof u === 'string' ? u : u.claim || JSON.stringify(u)) + '</span></div>';
+      }
+    }
+    html += '</div>';
   }
 
   html += '</div>';

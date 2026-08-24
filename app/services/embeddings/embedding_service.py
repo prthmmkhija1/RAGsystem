@@ -7,7 +7,7 @@ No API key needed, no cost, no rate limits.
 """
 import asyncio
 import gc
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from app.utils import cache_service
 from app.utils.error_handler import ExternalServiceError
@@ -93,39 +93,44 @@ async def generate_embeddings_batched(
         return []
 
     results: List[Optional[List[float]]] = [None] * len(texts)
-    texts_to_generate: List[str] = []
-    indices_to_fill: List[int] = []
+
+    # Map each text still needing an embedding to every position it occupies.
+    # Deduplicating here means a repeated chunk (boilerplate headers, footers,
+    # a duplicated paragraph) is embedded once instead of once per occurrence.
+    pending: Dict[str, List[int]] = {}
 
     if not skip_cache:
-        hits, misses = cache_service.get_embeddings_batch(texts)
+        hits, _ = cache_service.get_embeddings_batch(texts)
         for idx, text in enumerate(texts):
             if text in hits:
                 results[idx] = hits[text]
             else:
-                texts_to_generate.append(text)
-                indices_to_fill.append(idx)
+                pending.setdefault(text, []).append(idx)
 
-        if not texts_to_generate:
+        if not pending:
             print(f"[Embeddings] All {len(texts)} embeddings served from cache")
             return results  # type: ignore
-        print(f"[Embeddings] Cache: {len(hits)} hits, {len(misses)} misses")
+        print(f"[Embeddings] Cache: {len(hits)} hits, {len(texts) - len(hits)} misses "
+              f"({len(pending)} unique to embed)")
     else:
-        texts_to_generate = list(texts)
-        indices_to_fill = list(range(len(texts)))
+        for idx, text in enumerate(texts):
+            pending.setdefault(text, []).append(idx)
+
+    unique_texts = list(pending)
 
     # Generate in batches
     generated: List[List[float]] = []
-    for i in range(0, len(texts_to_generate), batch_size):
-        batch = texts_to_generate[i : i + batch_size]
+    for i in range(0, len(unique_texts), batch_size):
+        batch = unique_texts[i : i + batch_size]
         embs = await generate_embeddings(batch)
         generated.extend(embs)
 
-    # Fill results and cache new embeddings
+    # Fan each embedding back out to every position its text occupied
     to_cache = {}
-    for j, emb in enumerate(generated):
-        idx = indices_to_fill[j]
-        results[idx] = emb
-        to_cache[texts_to_generate[j]] = emb
+    for text, emb in zip(unique_texts, generated):
+        for idx in pending[text]:
+            results[idx] = emb
+        to_cache[text] = emb
 
     cache_service.set_embeddings_batch(to_cache)
     return results  # type: ignore

@@ -13,6 +13,15 @@ from app.utils.error_handler import ExternalServiceError
 _client: Optional[chromadb.ClientAPI] = None
 _collection = None
 
+# Memoized document listing. Building it requires pulling every chunk's
+# metadata, so we cache it and invalidate explicitly on any write.
+_doc_list_cache: Optional[List[Dict]] = None
+
+
+def _invalidate_doc_list() -> None:
+    global _doc_list_cache
+    _doc_list_cache = None
+
 
 def initialize():
     """Initialize ChromaDB PersistentClient and ensure collection exists."""
@@ -69,6 +78,7 @@ def store_chunks(chunk_metadata: List[Dict], embeddings: List[List[float]]) -> N
         except Exception as e:
             raise ExternalServiceError("ChromaDB", f"Failed to store chunks: {e}")
 
+    _invalidate_doc_list()
     doc_id = chunk_metadata[0]["document_id"] if chunk_metadata else "?"
     print(f"[VectorStore] Stored {len(chunk_metadata)} chunks for document {doc_id}")
 
@@ -102,7 +112,10 @@ def search_similar(
                 "text": results["documents"][0][idx],
                 "metadata": results["metadatas"][0][idx],
                 "distance": results["distances"][0][idx],
-                "similarity_score": 1 - results["distances"][0][idx],
+                # Cosine distance spans 0-2, so 1-distance spans -1..1. Clamp to
+                # 0-1 so callers (and the UI's percentage display) never see a
+                # negative score for a chunk pointing away from the query.
+                "similarity_score": min(1.0, max(0.0, 1 - results["distances"][0][idx])),
             }
             for idx in range(len(results["ids"][0]))
         ]
@@ -126,20 +139,38 @@ def delete_document(document_id: str) -> None:
     col = _get_collection()
     try:
         col.delete(where={"document_id": document_id})
+        _invalidate_doc_list()
         print(f"[VectorStore] Deleted all chunks for document {document_id}")
     except Exception as e:
         raise ExternalServiceError("ChromaDB", f"Delete failed: {e}")
 
 
+# ─── Existence ────────────────────────────────────────────
+
+def document_exists(document_id: str) -> bool:
+    """Return True if any chunk belongs to *document_id*."""
+    return any(d["document_id"] == document_id for d in list_documents())
+
+
 # ─── List / Stats ─────────────────────────────────────────
 
 def list_documents() -> List[Dict]:
-    """List all unique documents in the collection."""
+    """
+    List all unique documents in the collection.
+
+    Memoized: the underlying scan pulls every chunk's metadata, so the result
+    is cached until the next write (store_chunks / delete_document).
+    """
+    global _doc_list_cache
+    if _doc_list_cache is not None:
+        return _doc_list_cache
+
     col = _get_collection()
     try:
         all_data = col.get(include=["metadatas"])
         if not all_data["ids"]:
-            return []
+            _doc_list_cache = []
+            return _doc_list_cache
 
         doc_map: Dict[str, Dict] = {}
         for meta in all_data["metadatas"]:
@@ -153,18 +184,25 @@ def list_documents() -> List[Dict]:
                 }
             doc_map[did]["chunk_count"] += 1
 
-        return list(doc_map.values())
+        _doc_list_cache = list(doc_map.values())
+        return _doc_list_cache
     except Exception as e:
         raise ExternalServiceError("ChromaDB", f"List failed: {e}")
 
 
-def get_stats() -> Dict:
-    """Get collection statistics."""
+def get_stats(include_documents: bool = True) -> Dict:
+    """
+    Get collection statistics.
+
+    Pass include_documents=False for callers that only need the counts
+    (e.g. /health) so the document list is not serialized into the response.
+    """
     col = _get_collection()
-    count = col.count()
     docs = list_documents()
-    return {
-        "total_chunks": count,
+    stats = {
+        "total_chunks": col.count(),
         "total_documents": len(docs),
-        "documents": docs,
     }
+    if include_documents:
+        stats["documents"] = docs
+    return stats

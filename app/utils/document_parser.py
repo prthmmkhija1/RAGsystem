@@ -4,11 +4,10 @@ Extracts raw text from PDF, DOCX, TXT, and Markdown files.
 """
 import os
 import re
-from typing import Union
 
-import PyPDF2
 import docx
 import markdown
+from pypdf import PdfReader
 
 SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".txt", ".md", ".markdown"}
 
@@ -63,7 +62,7 @@ def _parse_pdf(content: bytes) -> str:
     """Extract text from a PDF buffer."""
     import io
     try:
-        reader = PyPDF2.PdfReader(io.BytesIO(content))
+        reader = PdfReader(io.BytesIO(content))
         pages = [page.extract_text() or "" for page in reader.pages]
         return "\n".join(pages)
     except Exception as e:

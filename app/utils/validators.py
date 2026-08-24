@@ -7,12 +7,6 @@ from pydantic import BaseModel, Field, field_validator
 import uuid
 
 
-class UploadParams(BaseModel):
-    """Optional body fields sent alongside file upload."""
-    chunk_size: Optional[int] = Field(None, ge=100, le=10000)
-    chunk_overlap: Optional[int] = Field(None, ge=0, le=500)
-
-
 class QueryRequest(BaseModel):
     """POST /api/query body."""
     query: str = Field(..., min_length=1, max_length=5000)
@@ -44,6 +38,8 @@ class CompareRequest(BaseModel):
     topic: str = Field(..., min_length=1, max_length=2000)
     top_k: int = Field(5, ge=1, le=20)
     structured: bool = False
+    verify: bool = False
+    rerank: bool = False
 
     @field_validator("document_ids")
     @classmethod

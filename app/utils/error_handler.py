@@ -30,7 +30,7 @@ class NotFoundError(AppError):
 
 
 class ExternalServiceError(AppError):
-    """Third-party service (Grok, ChromaDB) failure."""
+    """Third-party service (Groq, ChromaDB) failure."""
     def __init__(self, service: str, message: str):
         super().__init__(f"{service} error: {message}", 502)
 

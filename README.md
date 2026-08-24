@@ -132,12 +132,22 @@ Create a `.env` file in the project root and set your Groq API key:
 
 ```env
 GROQ_API_KEY=your_groq_api_key_here
+GROQ_MODEL=openai/gpt-oss-120b
 PORT=3000
 CHUNK_SIZE=500
 CHUNK_OVERLAP=100
 ```
 
 Get a free API key at [console.groq.com](https://console.groq.com)
+
+> **Note on models:** Groq retires models periodically. If a request fails with
+> `404 model_not_found`, list the models your key can currently reach and set
+> `GROQ_MODEL` to one of them:
+>
+> ```bash
+> curl https://api.groq.com/openai/v1/models \
+>   -H "Authorization: Bearer $GROQ_API_KEY"
+> ```
 
 ### 3. Run the server
 
@@ -173,7 +183,7 @@ The project includes a **single-file web client** served automatically at the ro
 | **Upload**    | Drag & drop or browse — supports PDF, DOCX, TXT, Markdown with configurable chunk size/overlap                          |
 | **Documents** | List all uploaded documents, view metadata, delete with one click                                                       |
 | **Query**     | Ask questions with adjustable Top-K, Re-rank toggle, Verification toggle; see answer + confidence bar + source previews |
-| **Compare**   | Select two documents, pick a topic, toggle structured JSON — rendered as a rich comparison view                         |
+| **Compare**   | Select two documents, pick a topic, toggle structured JSON and verification — rendered as a rich comparison view        |
 
 ### Example: Upload a document
 
@@ -205,9 +215,12 @@ curl -X POST http://localhost:3000/api/compare \
   -d '{
     "document_ids": ["uuid-1", "uuid-2"],
     "topic": "methodology",
-    "structured": true
+    "structured": true,
+    "verify": true
   }'
 ```
+
+Returns `404` if either document ID is unknown.
 
 ---
 
@@ -247,7 +260,7 @@ curl -X POST http://localhost:3000/api/compare \
 | **Embeddings**    | ONNX Runtime (all-MiniLM-L6-v2) | ~100 MB RAM vs ~2 GB for PyTorch, same quality       |
 | **Vector DB**     | ChromaDB (PersistentClient)     | Embedded, no server process, cosine similarity       |
 | **Re-ranking**    | Custom BM25 + Vector hybrid     | Lightweight keyword overlap improves retrieval       |
-| **Caching**       | In-memory TTL cache             | Embeddings 24h, queries 1h — avoids redundant work   |
+| **Caching**       | In-memory TTL + LRU cache       | Embeddings 24h, queries/compares 1h — avoids redundant work |
 | **Validation**    | Pydantic v2                     | Type-safe request/response models                    |
 | **HTTP Client**   | httpx (async)                   | Non-blocking LLM API calls with retry logic          |
 
@@ -255,18 +268,26 @@ curl -X POST http://localhost:3000/api/compare \
 
 ## Environment Variables
 
-| Variable             | Default                          | Description                            |
-| -------------------- | -------------------------------- | -------------------------------------- |
-| `GROQ_API_KEY`       | —                                | Groq API key (**required**)            |
-| `GROQ_API_URL`       | `https://api.groq.com/openai/v1` | Groq API base URL                      |
-| `GROQ_MODEL`         | `llama-3.3-70b-versatile`        | LLM model name                         |
-| `EMBEDDING_MODEL`    | `all-MiniLM-L6-v2`               | Local embedding model                  |
-| `PORT`               | `3000`                           | Server port                            |
-| `CHUNK_SIZE`         | `500`                            | Characters per chunk                   |
-| `CHUNK_OVERLAP`      | `100`                            | Overlap between chunks                 |
-| `TEMPERATURE`        | `0.1`                            | LLM temperature (lower = more factual) |
-| `MAX_TOKENS`         | `2048`                           | Max LLM response tokens                |
-| `CHROMA_PERSIST_DIR` | `./chroma_data`                  | ChromaDB storage path                  |
-| `CHROMA_COLLECTION`  | `rag_documents`                  | ChromaDB collection name               |
+| Variable               | Default                          | Description                                             |
+| ---------------------- | -------------------------------- | ------------------------------------------------------- |
+| `GROQ_API_KEY`         | —                                | Groq API key (**required**)                             |
+| `GROQ_API_URL`         | `https://api.groq.com/openai/v1` | Groq API base URL                                       |
+| `GROQ_MODEL`           | `llama-3.3-70b-versatile`        | LLM model name — **override this**, the default is retired |
+| `EMBEDDING_MODEL`      | `all-MiniLM-L6-v2`               | Local embedding model                                   |
+| `PORT`                 | `3000`                           | Server port                                             |
+| `CHUNK_SIZE`           | `500`                            | Characters per chunk                                    |
+| `CHUNK_OVERLAP`        | `100`                            | Overlap between chunks                                  |
+| `TEMPERATURE`          | `0.1`                            | LLM temperature (lower = more factual)                  |
+| `MAX_TOKENS`           | `2048`                           | Max LLM response tokens                                 |
+| `RETRY_ATTEMPTS`       | `3`                              | LLM call retries on 429 / 5xx                           |
+| `RETRY_DELAY`          | `1.0`                            | Base retry delay in seconds (exponential backoff)       |
+| `CHROMA_PERSIST_DIR`   | `./chroma_data`                  | ChromaDB storage path                                   |
+| `CHROMA_COLLECTION`    | `rag_documents`                  | ChromaDB collection name                                |
+| `CORS_ORIGINS`         | `*`                              | Comma-separated allowed origins. Credentials are enabled only for an explicit allowlist |
+| `EMBEDDING_CACHE_TTL`  | `86400`                          | Embedding cache TTL in seconds (24 h)                   |
+| `QUERY_CACHE_TTL`      | `3600`                           | Query/compare cache TTL in seconds (1 h)                |
+| `DOC_CACHE_TTL`        | `1800`                           | Document metadata cache TTL in seconds (30 min)         |
+| `EMBEDDING_CACHE_MAX`  | `10000`                          | Max embedding cache entries (LRU eviction)              |
+| `QUERY_CACHE_MAX`      | `1000`                           | Max query/compare cache entries (LRU eviction)          |
 
 ---

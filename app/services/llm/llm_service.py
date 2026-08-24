@@ -141,23 +141,28 @@ async def chat_completion(
     messages: List[Dict[str, str]],
     temperature: Optional[float] = None,
     max_tokens: Optional[int] = None,
+    json_mode: bool = False,
 ) -> str:
     """Send a chat completion request to Groq with retry logic."""
     temp = temperature if temperature is not None else llm_config.TEMPERATURE
     tokens = max_tokens or llm_config.MAX_TOKENS
     last_error: Optional[Exception] = None
 
+    payload = {
+        "model": llm_config.MODEL,
+        "messages": messages,
+        "temperature": temp,
+        "max_tokens": tokens,
+    }
+    if json_mode:
+        payload["response_format"] = {"type": "json_object"}
+
     for attempt in range(1, llm_config.RETRY_ATTEMPTS + 1):
         try:
             client = _get_client()
             resp = await client.post(
                 f"{llm_config.API_URL}/chat/completions",
-                json={
-                    "model": llm_config.MODEL,
-                    "messages": messages,
-                    "temperature": temp,
-                    "max_tokens": tokens,
-                },
+                json=payload,
                 headers={
                     "Content-Type": "application/json",
                     "Authorization": f"Bearer {llm_config.API_KEY}",
@@ -252,7 +257,7 @@ async def generate_structured_comparison(
             f"Comparison Topic: {topic}"
         )},
     ]
-    response = await chat_completion(messages, temperature=0.1, max_tokens=2500)
+    response = await chat_completion(messages, temperature=0.1, max_tokens=2500, json_mode=True)
 
     try:
         cleaned = re.sub(r"```json\n?|\n?```", "", response).strip()
@@ -293,7 +298,7 @@ async def verify_answer(answer: str, context_chunks: List[Dict]) -> Dict:
             "Verify this answer against the source context."
         )},
     ]
-    response = await chat_completion(messages, temperature=0.1, max_tokens=1500)
+    response = await chat_completion(messages, temperature=0.1, max_tokens=1500, json_mode=True)
     try:
         cleaned = re.sub(r"```json\n?|\n?```", "", response).strip()
         return json.loads(cleaned)

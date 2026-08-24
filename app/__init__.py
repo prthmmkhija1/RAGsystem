@@ -39,12 +39,19 @@ app = FastAPI(
 )
 
 # ─── CORS ─────────────────────────────────────────────────
+# Set CORS_ORIGINS to a comma-separated allowlist in production.
+# A wildcard origin cannot legally be combined with credentials — browsers
+# reject that pairing outright — so credentials are enabled only for an
+# explicit allowlist.
+_origins = [o.strip() for o in os.getenv("CORS_ORIGINS", "*").split(",") if o.strip()]
+_wildcard = _origins == ["*"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=_origins,
+    allow_credentials=not _wildcard,
+    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization"],
 )
 
 # ─── Exception Handlers ──────────────────────────────────
@@ -60,14 +67,11 @@ app.include_router(compare_router)
 @app.get("/health")
 async def health():
     """Health check endpoint."""
-    stats = vector_store_service.get_stats()
+    stats = vector_store_service.get_stats(include_documents=False)
     return {
         "status": "healthy",
         "service": "AI RAG System",
-        "vector_store": {
-            "total_chunks": stats["total_chunks"],
-            "total_documents": stats["total_documents"],
-        },
+        "vector_store": stats,
         "cache": cache_service.get_stats(),
     }
 
